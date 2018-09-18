@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package absinthe_proto.test;
+
+message Basic {
+  enum SimpleEnum {
+    DEFAULT = 0;
+    ONE = 1;
+  }
+
+  string name = 1;
+  SimpleEnum enum_value = 2;
+}
+
+message User {
+  string id = 1;
+  string name = 2;
+  int64 extra_field = 3;
+}
+
+message Oneof {
+  string id = 1;
+  oneof union_enum {
+    string string_value = 2;
+    int32 int_value = 3;
+    Basic.SimpleEnum enum_value = 4;
+  }
+}
+
+message RepeatedNested {
+  repeated Basic basics = 1;
+}
+
+message WithForeignKey {
+  string id = 1;
+  string user_id = 2;
+  string user_with_an_id = 3;
+}

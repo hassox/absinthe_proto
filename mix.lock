@@ -1,0 +1,4 @@
+%{
+  "absinthe": {:hex, :absinthe, "1.4.13", "81eb2ff41f1b62cd6e992955f62c22c042d1079b7936c27f5f7c2c806b8fc436", [:mix], [{:dataloader, "~> 1.0.0", [hex: :dataloader, repo: "hexpm", optional: true]}, {:decimal, "~> 1.0", [hex: :decimal, repo: "hexpm", optional: true]}], "hexpm"},
+  "protobuf": {:git, "https://github.com/tony612/protobuf-elixir.git", "5d4ed2bcebefad3c2b9b397c1a46b49b41eae7ab", []},
+}
