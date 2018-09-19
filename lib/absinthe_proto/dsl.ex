@@ -71,7 +71,6 @@ defmodule AbsintheProto.DSL do
     for {_, obj} <- msgs do
       case obj do
         %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          IO.puts("object #{inspect(obj_id)}")
           field_ast = for {id, %{attrs: attrs}} <- fields do
             quote do
               field unquote(id), unquote(attrs)
@@ -85,7 +84,6 @@ defmodule AbsintheProto.DSL do
           end
 
         %AbsintheProto.Objects.GqlInputObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          IO.puts("input_object #{inspect(obj_id)}")
           field_ast = for {id, %{attrs: attrs}} <- fields do
             quote do
               field unquote(id), unquote(attrs)
@@ -98,7 +96,6 @@ defmodule AbsintheProto.DSL do
             end
           end
         %AbsintheProto.Objects.GqlEnum{identifier: enum_id, attrs: enum_attrs, values: values} ->
-          IO.puts("enum #{inspect(enum_id)}")
           value_ast = for %{identifier: ident, attrs: attrs} <- values do
             quote do
               value unquote(ident), unquote(attrs)
