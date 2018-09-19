@@ -1,9 +1,12 @@
 defmodule AbsintheProtoTest.Types do
   use AbsintheProto
 
+  # build all proto messages found within a namespace
   build AbsintheProto.Test, paths: Path.wildcard("#{__DIR__}/../../protos/absinthe_proto/**/*.ex") do
-    # input_objects [AbsintheProtoTest.User]
+    # create input objects when other apis need to use them
+    input_objects [AbsintheProto.Test.User, AbsintheProto.Test.Oneof]
 
+    # Modify an object before it's generated. Add/Remove/Update field definitions
     modify AbsintheProto.Test.User do
       exclude_fields [:field_to_remove]
 

@@ -64,6 +64,7 @@ defmodule AbsintheProto.DSL do
     for {_, obj} <- msgs do
       case obj do
         %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
+          IO.puts("object #{inspect(obj_id)}")
           field_ast = for {id, %{attrs: attrs}} <- fields do
             quote do
               field unquote(id), unquote(attrs)
@@ -75,7 +76,22 @@ defmodule AbsintheProto.DSL do
               unquote_splicing(field_ast)
             end
           end
+
+        %AbsintheProto.Objects.GqlInputObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
+          IO.puts("input_object #{inspect(obj_id)}")
+          field_ast = for {id, %{attrs: attrs}} <- fields do
+            quote do
+              field unquote(id), unquote(attrs)
+            end
+          end
+
+          quote do
+            input_object unquote(obj_id), unquote(obj_attrs) do
+              unquote_splicing(field_ast)
+            end
+          end
         %AbsintheProto.Objects.GqlEnum{identifier: enum_id, attrs: enum_attrs, values: values} ->
+          IO.puts("enum #{inspect(enum_id)}")
           value_ast = for %{identifier: ident, attrs: attrs} <- values do
             quote do
               value unquote(ident), unquote(attrs)
@@ -120,7 +136,8 @@ defmodule AbsintheProto.DSL do
       %AbsintheProto.Objects.GqlObject{} = obj ->
         new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
         Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
-      _ ->
+      x ->
+        IO.inspect(x)
         raise "exclude_fields is only applicable to proto messages"
     end
   end
@@ -145,7 +162,7 @@ defmodule AbsintheProto.DSL do
           %{fields: fields} = obj ->
             do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
         end
-      {_, %{oneof: oneof_id} = props} ->
+      {_, %{oneof: oneof_id} = props} -> :todo
     end
   end
 
@@ -173,6 +190,13 @@ defmodule AbsintheProto.DSL do
     new_obj = %{obj | fields: Map.put(obj.fields, new_field.identifier, new_field)}
     gql_messages = Map.put(gql_messages, new_obj.identifier, new_obj)
     Module.put_attribute(__CALLER__.module, :proto_gql_messages, gql_messages)
+  end
+
+  defmacro input_objects(objs) do
+    {objs, _} = Module.eval_quoted(__CALLER__, objs)
+    for obj <- objs do
+      create_input_object(__CALLER__.module, obj)
+    end
   end
 
   defp do_update_field(caller_mod, gql_messages, obj, field_name, new_attrs) do
@@ -212,6 +236,25 @@ defmodule AbsintheProto.DSL do
     Map.put(fields, field_name, %{field | attrs: new_attrs})
   end
 
+  defp create_input_object(within_mod, mod) do
+    ns = Module.get_attribute(within_mod, :proto_namespace)
+    gql_messages = Module.get_attribute(within_mod, :proto_gql_messages)
+    if !within_namespace?(mod, ns) do
+      raise "cannot create input object for #{mod}. It is not within the #{ns} namespace"
+    end
+
+    obj_name = gql_object_name(mod, [:input_object])
+
+    # we only want to create this once
+    with obj when is_nil(obj) <- Map.get(gql_messages, obj_name) do
+      input_objs =
+        for o <- proto_gql_object(:input, mod), into: %{}, do: {o.identifier, o}
+
+      gql_messages = Map.merge(gql_messages, input_objs)
+      Module.put_attribute(within_mod, :proto_gql_messages, gql_messages)
+    end
+  end
+
   @doc false
   def messages_from_proto_namespace(ns, from_mods) do
     ns
@@ -244,17 +287,27 @@ defmodule AbsintheProto.DSL do
 
   defp proto_gql_object(:unknown, _), do: []
   defp proto_gql_object(:message, mod) do
+    name_opts = []
     [
-      proto_default_oneof_objects(mod),
-      proto_default_map_objects(mod),
-      proto_default_message_object(mod)
+      proto_default_oneof_objects(mod, name_opts, AbsintheProto.Objects.GqlObject),
+      proto_default_map_objects(mod, name_opts, AbsintheProto.Objects.GqlObject),
+      proto_default_message_object(mod, name_opts, AbsintheProto.Objects.GqlObject)
+    ]
+    |> Enum.flat_map(&(&1))
+  end
+
+  defp proto_gql_object(:input, mod) do
+    name_opts = [:input_object]
+    [
+      proto_default_oneof_objects(mod, name_opts, AbsintheProto.Objects.GqlInputObject),
+      proto_default_map_objects(mod, name_opts, AbsintheProto.Objects.GqlInputObject),
+      proto_default_message_object(mod, name_opts, AbsintheProto.Objects.GqlInputObject)
     ]
     |> Enum.flat_map(&(&1))
   end
 
   defp proto_gql_object(:enum, mod) do
     %AbsintheProto.Objects.GqlEnum{
-      gql_type: :enum,
       module: mod,
       identifier: gql_object_name(mod),
       attrs: [],
@@ -267,7 +320,7 @@ defmodule AbsintheProto.DSL do
 
   defp proto_gql_object(:service, mod), do: []
 
-  defp proto_default_oneof_objects(mod, type \\ :object) do
+  defp proto_default_oneof_objects(mod, name_opts, as_mod) do
     msg_props = mod.__message_props__
     case msg_props do
       %{oneof: []} ->
@@ -279,26 +332,30 @@ defmodule AbsintheProto.DSL do
             |> Enum.map(fn {_, p} -> p end)
             |> Enum.filter(&(&1.oneof == id))
 
-          %AbsintheProto.Objects.GqlObject{
-            gql_type: type,
-            module: nil,
-            identifier: gql_object_name(mod, [:oneof, field]),
-            attrs: [description: "Only one of these fields may be set"],
-            fields: proto_fields(field_props),
-          }
+          struct(
+            as_mod,
+            %{
+              module: nil,
+              identifier: gql_object_name(mod, name_opts ++ [:oneof, field]),
+              attrs: [description: "Only one of these fields may be set"],
+              fields: proto_fields(field_props),
+            }
+          )
         end
     end
   end
 
-  defp proto_default_map_objects(mod, type \\ :object), do: []
-  defp proto_default_message_object(mod, type \\ :object) do
-    %AbsintheProto.Objects.GqlObject{
-      gql_type: type,
-      module: mod,
-      identifier: gql_object_name(mod),
-      attrs: [],
-      fields: %{}
-    }
+  defp proto_default_map_objects(mod, name_opts, as_mod), do: []
+  defp proto_default_message_object(mod, name_opts, as_mod) do
+    struct(
+      as_mod,
+      %{
+        module: mod,
+        identifier: gql_object_name(mod, name_opts),
+        attrs: [],
+        fields: %{}
+      }
+    )
     |> proto_basic_message_fields()
     |> List.wrap()
   end
@@ -315,7 +372,7 @@ defmodule AbsintheProto.DSL do
     %{gql_object | fields: fields}
   end
 
-  defp create_message_oneof_fields(mod, fields \\ []) do
+  defp create_message_oneof_fields(mod, fields) do
     case mod.__message_props__.oneof do
       [] -> fields
       oneofs ->

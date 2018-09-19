@@ -17,10 +17,13 @@ defmodule AbsintheProtoTest.Schema do
   def noop_resolver(_, _, _), do: {:ok, nil}
 
   def descriptor_resolver(_, _, _) do
+    IO.puts("Loading proto bundle")
     set =
       "/Users/dneighman/Development/od_protos/proto_bundle"
       |> File.read!()
       |> Google.Protobuf.FileDescriptorSet.decode()
+
+    IO.puts("Finished Loading proto bundle")
     {:ok, set}
   end
 
