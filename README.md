@@ -19,3 +19,16 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_proto).
 
+[x] Basic messages
+[x] Repeated messages
+[x] Enums
+[x] Oneofs
+[x] Loading in app
+[x] Loading Other app
+[x] Exclude fields
+[x] Overwrite Fields
+[ ] Input Objects
+[ ] Services (with manual resolvers)
+[ ] Foreign Keys
+[ ] Maps
+[ ] Service Resolvers

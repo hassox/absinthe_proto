@@ -16,6 +16,7 @@ message User {
   string id = 1;
   string name = 2;
   int64 extra_field = 3;
+  uint64 field_to_remove = 4;
 }
 
 message Oneof {
@@ -24,6 +25,7 @@ message Oneof {
     string string_value = 2;
     int32 int_value = 3;
     Basic.SimpleEnum enum_value = 4;
+    uint64 field_to_remove = 5;
   }
 }
 

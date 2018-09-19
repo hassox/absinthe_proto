@@ -1,19 +1,65 @@
 defmodule AbsintheProto.DSL do
+  @moduledoc """
+  Provides a DSL for importing Proto messages and converting to GraphQL types.
+  """
   require AbsintheProto.Objects.GqlObject
   require AbsintheProto.Objects.GqlObject.GqlField
   require AbsintheProto.Objects.GqlEnum
   require AbsintheProto.Objects.GqlEnum.GqlValue
 
-  defmacro build(proto_namespace, load_files \\ []) do
+  @type build_opts :: [paths: [String.t]] | [otp_app: atom]
+
+  @custom_field_attrs [:non_null]
+
+  @doc """
+  Build all protos found within the namespace.
+
+  We need to give the compiler some help to find all the modules available.
+
+  For this we use options to either provide paths to files containing our modules or an otp_app.
+
+  ### `:paths` vs `:otp_app`
+
+  Both are evaluated at compile time so are safe to use inside packages.
+
+  If your compiled protos live in the same otp_application as you're using, you'll need to use
+  the `:paths` option.
+
+      build MyProto.Package, paths: Path.wildcard("#{__DIR__}/relative/path/**/*.pb.ex")
+
+   If you're compiled protos live in a separate otp application, use the `:otp_app` option.
+   This option is more efficient than the `:paths` option
+
+   If you need to modify the fields you can pass build a block.
+  """
+  defmacro build(proto_namespace, options, blk \\ [do: []]) do
     ns = Macro.expand(proto_namespace, __CALLER__)
+    opts = Module.eval_quoted(__CALLER__, options)
 
-    {load_files, _} = Module.eval_quoted(__CALLER__, load_files)
-    for path <- load_files, do: Code.compile_file(path)
+    mods =
+      case opts do
+        nil -> nil
+        {[paths: load_files], _} when is_list(load_files) ->
+          for path <- load_files, do: Code.compile_file(path)
+          Enum.map(:code.all_loaded(), fn {m, _} -> m end)
 
-    # configurer = Module.get_attribute(__CALLER__.module, :absinthe_proto_mod)
+        {[otp_app: app], _} when is_atom(app) ->
+          Application.ensure_all_started(app)
+          {:ok, m} = :application.get_key(app, :modules)
+          m
+        _ ->
+          raise "unknown options given to AbsintheProto.DSL.build"
+      end
+
+    Module.put_attribute(__CALLER__.module, :proto_namespace, ns)
+
     otp_app = Module.get_attribute(__CALLER__.module, :otp_app)
-    msgs = AbsintheProto.DSL.messages_from_proto_namespace(ns)
+    msgs = AbsintheProto.DSL.messages_from_proto_namespace(ns, mods)
     Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
+
+    Module.eval_quoted(__CALLER__, blk)
+
+    msgs = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
 
     for {_, obj} <- msgs do
       case obj do
@@ -45,18 +91,138 @@ defmodule AbsintheProto.DSL do
     end
   end
 
-  def messages_from_proto_namespace(ns) do
+  defmacro modify(proto_mod, blk) do
+    mod = Macro.expand(proto_mod, __CALLER__)
+    Module.put_attribute(__CALLER__.module, :modify_proto_mod, mod)
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+    Module.eval_quoted(__CALLER__, blk)
+  after
+    Module.delete_attribute(__CALLER__.module, :modify_proto_mod)
+  end
+
+  @doc """
+  Excludes fields from a proto message
+  """
+  defmacro exclude_fields(fields) do
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+
+    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+
+    {excluded_fields, _} = Module.eval_quoted(__CALLER__, fields)
+
+    identifier = gql_object_name(mod)
+
+    case Map.get(gql_messages, identifier) do
+      nil -> raise "cannot find gql object #{inspect(identifier)}"
+      %AbsintheProto.Objects.GqlObject{} = obj ->
+        new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
+        Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
+      _ ->
+        raise "exclude_fields is only applicable to proto messages"
+    end
+  end
+
+  defmacro update_field(field_name, attrs) do
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+
+    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+
+    {new_attrs, _} = Module.eval_quoted(__CALLER__, attrs)
+    {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
+
+    case Enum.find(mod.__message_props__.field_props, fn {_, p} -> p.name_atom == field_name end) do
+      nil ->
+        raise "could not find field #{inspect(field_name)} in #{mod}"
+      {_, %{oneof: nil}} ->
+        obj_name = gql_object_name(mod)
+        case Map.get(gql_messages, obj_name) do
+          nil -> raise "could not find gql message #{obj_name}"
+          %{fields: fields} = obj ->
+            do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
+        end
+      {_, %{oneof: oneof_id} = props} ->
+    end
+  end
+
+  defmacro add_field(field_name, datatype, attrs \\ []) do
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+
+    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+    obj_name = gql_object_name(mod)
+    obj = Map.get(gql_messages, obj_name)
+    if !obj do
+      raise "could not find gql object #{obj_name}"
+    end
+
+    {ident, _} = Module.eval_quoted(__CALLER__, field_name)
+    {attrs, _} = Module.eval_quoted(__CALLER__, attrs)
+    attrs = for {k, v} <- attrs, into: [], do: {k, quote do: unquote(v)}
+    attrs = Keyword.put(attrs, :type, datatype)
+
+    new_field = %AbsintheProto.Objects.GqlObject.GqlField{
+      identifier: ident,
+      attrs: attrs,
+    }
+    new_obj = %{obj | fields: Map.put(obj.fields, new_field.identifier, new_field)}
+    gql_messages = Map.put(gql_messages, new_obj.identifier, new_obj)
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, gql_messages)
+  end
+
+  defp do_update_field(caller_mod, gql_messages, obj, field_name, new_attrs) do
+    new_fields = update_field_attrs(obj.fields, field_name, new_attrs)
+    obj = %{obj | fields: new_fields}
+    Module.put_attribute(caller_mod, :proto_gql_messages, Map.put(gql_messages, obj.identifier, obj))
+  end
+
+  defp update_field_attrs(fields, field_name, new_attrs) do
+    field = Map.get(fields, field_name)
+    if !field do
+      raise "could not find field #{field_name}"
+    end
+
+    attrs = field.attrs
+
+    custom_attrs = Keyword.take(new_attrs, @custom_field_attrs)
+    new_attrs = Keyword.drop(new_attrs, @custom_field_attrs)
+
+    new_attrs =
+      for {k, v} <- new_attrs, into: [], do: {k, quote do: unquote(v)}
+
+    new_attrs = Keyword.merge(attrs, new_attrs)
+
+    new_attrs =
+      if Keyword.get(custom_attrs, :non_null) do
+        type = Keyword.get(new_attrs, :type)
+        content =
+          quote bind_quoted: [type: Macro.escape(type, unquote: true)] do
+            non_null(type)
+          end
+        Keyword.put(new_attrs, :type, content)
+      else
+        new_attrs
+      end
+
+    Map.put(fields, field_name, %{field | attrs: new_attrs})
+  end
+
+  @doc false
+  def messages_from_proto_namespace(ns, from_mods) do
     ns
-    |> modules_for_namespace()
+    |> modules_for_namespace(from_mods)
     |> proto_gql_objects()
   end
 
-  defp modules_for_namespace(ns) do
-    ns = to_string(ns)
+  defp modules_for_namespace(ns, from_mods) do
     mods =
-      :code.all_loaded()
-      |> Enum.map(fn {m, _} -> m end)
-      |> Enum.filter(fn m -> String.starts_with?(to_string(m), ns) end)
+      from_mods
+      |> Enum.filter(fn m -> within_namespace?(m, ns) end)
     {:ok, mods}
   end
 
@@ -66,7 +232,7 @@ defmodule AbsintheProto.DSL do
     |> Enum.flat_map(&proto_gql_object/1)
     |> Enum.filter(&(&1 != nil))
     |> Enum.into(%{}, fn i ->
-      {i.module, i}
+      {i.identifier, i}
     end)
   end
 
@@ -117,12 +283,13 @@ defmodule AbsintheProto.DSL do
             gql_type: type,
             module: nil,
             identifier: gql_object_name(mod, [:oneof, field]),
-            attrs: [],
+            attrs: [description: "Only one of these fields may be set"],
             fields: proto_fields(field_props),
           }
         end
     end
   end
+
   defp proto_default_map_objects(mod, type \\ :object), do: []
   defp proto_default_message_object(mod, type \\ :object) do
     %AbsintheProto.Objects.GqlObject{
@@ -143,37 +310,39 @@ defmodule AbsintheProto.DSL do
 
     basic_field_props = Enum.filter(bare_props, &(&1.oneof == nil))
     fields = proto_fields(basic_field_props)
-
-    fields =
-      case mod.__message_props__.oneof do
-        [] -> fields
-        oneofs ->
-          oneof_fields =
-            for {ident, oneof_id} <- oneofs, into: fields do
-              resolver = quote location: :keep do
-                fn
-                  %{unquote(ident) => {field_name, value}} = thing, _, _ ->
-                    {:ok, Map.put(%{}, field_name, value)}
-                  _, _, _ -> {:ok, nil}
-                end
-              end
-
-              {
-                ident,
-                %AbsintheProto.Objects.GqlObject.GqlField{
-                  identifier: ident,
-                  attrs: [type: gql_object_name(mod, [:oneof, ident]), resolve: resolver],
-                }
-              }
-          end
-      end
+    fields = create_message_oneof_fields(mod, fields)
 
     %{gql_object | fields: fields}
   end
 
+  defp create_message_oneof_fields(mod, fields \\ []) do
+    case mod.__message_props__.oneof do
+      [] -> fields
+      oneofs ->
+        for {ident, _oneof_id} <- oneofs, into: fields do
+          resolver = quote location: :keep do
+            fn
+              %{unquote(ident) => {field_name, value}} = thing, _, _ ->
+                {:ok, Map.put(%{}, field_name, value)}
+              _, _, _ -> {:ok, nil}
+            end
+          end
+
+          {
+            ident,
+            %AbsintheProto.Objects.GqlObject.GqlField{
+              identifier: ident,
+              attrs: [type: gql_object_name(mod, [:oneof, ident]), resolve: resolver],
+              orig?: true,
+            }
+          }
+      end
+    end
+  end
+
   defp proto_fields(field_props, existing \\ %{}) do
     for props <- field_props, into: existing do
-      f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom}
+      f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom, orig?: true}
       attrs =
         []
         |> datatype_for_props(props)
@@ -216,9 +385,44 @@ defmodule AbsintheProto.DSL do
 
   defp enum_resolver_for_props(attrs, _), do: attrs
 
-  defp proto_gql_type(:message), do: :object
-  defp proto_gql_type(:enum), do: :enum
-  defp proto_gql_type(:service), do: :object
+  defp raise_not_modifying_object(ns) do
+    raise "not currently modifying an object in #{ns}"
+  end
+
+  defp remove_fields(msgs, %AbsintheProto.Objects.GqlObject{} = obj, mod, fields) do
+    # remove oneof fields
+    removed_field_props =
+      for {_, props} <- mod.__message_props__.field_props,
+          Enum.member?(fields, props.name_atom),
+          into: [],
+          do: props
+
+    obj = %{obj | fields: Map.drop(obj.fields, fields)}
+    msgs = Map.put(msgs, obj.identifier, obj)
+    oneof_fields_by_name =
+      removed_field_props
+      |> Enum.filter(fn p -> p.oneof != nil end)
+      |> Enum.map(fn p ->
+        oneof_ident = Enum.find(mod.__message_props__.oneof, fn {_name, id} -> id == p.oneof end)
+        case oneof_ident do
+          {name, _} -> %{oneof_name: name, field_name: p.name_atom}
+          _ -> nil
+        end
+      end)
+      |> Enum.filter(&(&1 != nil))
+      |> Enum.group_by(fn i -> Map.get(i, :oneof_name) end)
+
+    Enum.reduce oneof_fields_by_name, msgs, fn {oneof_ident, items}, acc ->
+      obj_name = gql_object_name(mod, [:oneof, oneof_ident])
+      case Map.get(acc, obj_name) do
+        nil -> raise "cannot find the oneof object for #{mod}"
+        %{fields: fields} = oneof_obj ->
+          field_names = Enum.map(items, &(&1.field_name))
+          oneof_obj = %{oneof_obj | fields: Map.drop(fields, field_names)}
+          Map.put(acc, obj_name, oneof_obj)
+      end
+    end
+  end
 
   defp proto_type(m) do
     try do
@@ -249,5 +453,24 @@ defmodule AbsintheProto.DSL do
     end)
     |> Enum.join("__")
     |> String.to_atom()
+  end
+
+  defp within_namespace?(mod, ns) do
+    String.starts_with?(to_string(mod), to_string(ns))
+  end
+
+  defp maybe_raise_not_modifying_object(nil, ns, env) do
+    raise """
+      not modifying object within #{ns} (#{env.module} - #{env.file}:#{env.line})
+    """
+  end
+  defp maybe_raise_not_modifying_object(_, _, _), do: :nothing
+
+  defp maybe_raise_not_within_namespace(mod, ns, env) do
+    unless within_namespace?(mod, ns) do
+      raise """
+        cannot modify #{mod}. It is not within #{ns} (#{env.module} - #{env.file}:#{env.line})
+      """
+    end
   end
 end

@@ -3,7 +3,7 @@ defmodule AbsintheProto.Objects do
     defstruct [:gql_type, :identifier, :attrs, fields: %{}, module: nil]
 
     defmodule GqlField do
-      defstruct [:identifier, :attrs]
+      defstruct [:identifier, :attrs, :orig?]
     end
   end
 

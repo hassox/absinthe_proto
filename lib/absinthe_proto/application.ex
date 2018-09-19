@@ -6,5 +6,4 @@ defmodule AbsintheProto.Application do
     opts = [strategy: :one_for_one, name: AbsintheProto.Supervisor]
     Supervisor.start_link(children, opts)
   end
-
 end
