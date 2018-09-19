@@ -16,6 +16,7 @@ defmodule AbsintheProtoTest do
             }
             user {
               id
+              token
               name
               extra_field
               another_field

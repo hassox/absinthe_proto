@@ -13,7 +13,7 @@ message Basic {
 }
 
 message User {
-  string id = 1;
+  string token = 1;
   string name = 2;
   int64 extra_field = 3;
   uint64 field_to_remove = 4;

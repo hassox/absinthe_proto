@@ -25,14 +25,14 @@ defmodule AbsintheProto.Test.User do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    id:              String.t,
+    token:           String.t,
     name:            String.t,
     extra_field:     integer,
     field_to_remove: non_neg_integer
   }
-  defstruct [:id, :name, :extra_field, :field_to_remove]
+  defstruct [:token, :name, :extra_field, :field_to_remove]
 
-  field :id, 1, type: :string
+  field :token, 1, type: :string
   field :name, 2, type: :string
   field :extra_field, 3, type: :int64
   field :field_to_remove, 4, type: :uint64

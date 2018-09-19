@@ -34,16 +34,21 @@ defmodule AbsintheProto.DSL do
   """
   defmacro build(proto_namespace, options, blk \\ [do: []]) do
     ns = Macro.expand(proto_namespace, __CALLER__)
-    opts = Module.eval_quoted(__CALLER__, options)
+    {opts, _} = Module.eval_quoted(__CALLER__, options)
+    Module.put_attribute(__CALLER__.module, :id_alias, nil)
+    case Keyword.get(opts, :id_alias) do
+      nil -> :nothing
+      id_alias -> Module.put_attribute(__CALLER__.module, :id_alias, id_alias)
+    end
 
     mods =
-      case opts do
+      case Keyword.take(opts, [:paths, :otp_app]) do
         nil -> nil
-        {[paths: load_files], _} when is_list(load_files) ->
+        [paths: load_files] when is_list(load_files) ->
           for path <- load_files, do: Code.compile_file(path)
           Enum.map(:code.all_loaded(), fn {m, _} -> m end)
 
-        {[otp_app: app], _} when is_atom(app) ->
+        [otp_app: app] when is_atom(app) ->
           Application.ensure_all_started(app)
           {:ok, m} = :application.get_key(app, :modules)
           m
@@ -58,6 +63,8 @@ defmodule AbsintheProto.DSL do
     Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
 
     Module.eval_quoted(__CALLER__, blk)
+
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, apply_id_alias(__CALLER__.module))
 
     msgs = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
 
@@ -196,6 +203,54 @@ defmodule AbsintheProto.DSL do
     {objs, _} = Module.eval_quoted(__CALLER__, objs)
     for obj <- objs do
       create_input_object(__CALLER__.module, obj)
+    end
+  end
+
+  defp apply_id_alias(mod) do
+    id_alias = Module.get_attribute(mod, :id_alias)
+    gql_messages = Module.get_attribute(mod, :proto_gql_messages)
+    apply_id_alias(gql_messages, id_alias)
+  end
+
+  defp apply_id_alias(gql_messages, nil), do: gql_messages
+  defp apply_id_alias(gql_messages, %Regex{} = id_alias) do
+    apply_id_alias gql_messages, fn {field_id, _} ->
+      Regex.match?(id_alias, to_string(field_id))
+    end
+  end
+
+  defp apply_id_alias(gql_messages, id_alias) when is_function(id_alias) do
+    Enum.reduce gql_messages, gql_messages, fn
+      {obj_id, %AbsintheProto.Objects.GqlObject{} = obj}, acc ->
+        case Enum.find(obj.fields, id_alias) do
+          nil -> acc
+          {field_id, field} ->
+            resolver = quote do
+              fn(%{unquote(field_id) => val}, _, _) ->
+                {:ok, val}
+              end
+            end
+
+            id_attrs =
+              field.attrs
+              |> Keyword.take([:type])
+              |> Keyword.put(:resolve, resolver)
+
+            id_field = %AbsintheProto.Objects.GqlObject.GqlField{
+              identifier: :id,
+              attrs: id_attrs
+            }
+
+            obj = %{obj | fields: Map.put(obj.fields, :id, id_field)}
+            Map.put(acc, obj_id, obj)
+        end
+      _, acc -> acc
+    end
+  end
+
+  defp apply_id_alias(gql_messages, id_alias) do
+    apply_id_alias gql_messages, fn {field_id, _} ->
+      field_id == id_alias
     end
   end
 

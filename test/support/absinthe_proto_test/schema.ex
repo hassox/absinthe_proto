@@ -19,7 +19,7 @@ defmodule AbsintheProtoTest.Schema do
   def descriptor_resolver(_, _, _) do
     IO.puts("Loading proto bundle")
     set =
-      "/Users/dneighman/Development/od_protos/proto_bundle"
+      "#{__DIR__}/../../protos/bundle"
       |> File.read!()
       |> Google.Protobuf.FileDescriptorSet.decode()
 
@@ -51,7 +51,7 @@ defmodule AbsintheProtoTest.Schema do
     {
       :ok,
       AbsintheProto.Test.User.new(%{
-        id: "ABCDE",
+        token: "ABCDE",
         name: "Bob Belcher",
         extra_field: 34
       })

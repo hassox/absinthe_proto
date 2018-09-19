@@ -27,7 +27,8 @@ be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_prot
 [x] Loading Other app
 [x] Exclude fields
 [x] Overwrite Fields
-[ ] Input Objects
+[x] Input Objects
+[ ] id alias
 [ ] Services (with manual resolvers)
 [ ] Foreign Keys
 [ ] Maps

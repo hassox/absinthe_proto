@@ -2,7 +2,10 @@ defmodule AbsintheProtoTest.Types do
   use AbsintheProto
 
   # build all proto messages found within a namespace
-  build AbsintheProto.Test, paths: Path.wildcard("#{__DIR__}/../../protos/absinthe_proto/**/*.ex") do
+  build AbsintheProto.Test,
+        paths: Path.wildcard("#{__DIR__}/../../protos/absinthe_proto/**/*.ex"),
+        id_alias: :token
+  do
     # create input objects when other apis need to use them
     input_objects [AbsintheProto.Test.User, AbsintheProto.Test.Oneof]
 
@@ -20,6 +23,12 @@ defmodule AbsintheProtoTest.Types do
     modify AbsintheProto.Test.Oneof do
       exclude_fields [:field_to_remove]
     end
+
+    # modify AbsintheProto.Test.Service do
+    #   exclude_fields [:foo]
+    #   update_field :my_method, resolve: {SomeModule, :resolve_foo}
+    #   update_field :my_other_method, resolve: {SomeModule, :resolve_foo}
+    # end
   end
 
   build Google.Protobuf, otp_app: :protobuf
