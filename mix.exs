@@ -20,7 +20,6 @@ defmodule AbsintheProto.MixProject do
   end
 
   def elixir_paths(:absinthe_proto) do
-    IO.puts("Starting Absinthe Proto in Dev mode")
     ~w(lib test/support)
   end
 
@@ -33,7 +32,8 @@ defmodule AbsintheProto.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:protobuf, github: "tony612/protobuf-elixir"},
+      {:protobuf, github: "tony612/protobuf-elixir", override: true},
+      {:grpc, github: "tony612/grpc-elixir"},
       {:absinthe, "~>1.4"},
     ]
   end

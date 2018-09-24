@@ -1,5 +1,5 @@
 defmodule AbsintheProto do
-  defmacro __using__(opts \\ []) do
+  defmacro __using__(_opts \\ []) do
     quote location: :keep do
       Module.register_attribute(__MODULE__, :proto_gql_messages, accumulate: false)
       Module.put_attribute(__MODULE__, :proto_gql_messages, %{})

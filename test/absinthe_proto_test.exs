@@ -6,6 +6,22 @@ defmodule AbsintheProtoTest do
     result =
       Absinthe.run( """
           query {
+            getBasic(name: "foo", enumValue: ONE) {
+              name
+              enumValue
+              __typename
+            }
+
+            getOneof(id: "3", unionEnum: {stringValue: "bob"}){
+              id
+              __typename
+              unionEnum {
+                stringValue
+                intValue
+                enumValue
+                __typename
+              }
+            }
             repeatedNested {
               basics {
                 name
@@ -18,8 +34,8 @@ defmodule AbsintheProtoTest do
               id
               token
               name
-              extra_field
-              another_field
+              extraField
+              anotherField
               __typename
             }
             basic {
@@ -30,10 +46,10 @@ defmodule AbsintheProtoTest do
             oneof {
               id
               __typename
-              union_enum {
-                string_value
-                int_value
-                enum_value
+              unionEnum {
+                stringValue
+                intValue
+                enumValue
                 __typename
               }
             }
@@ -41,22 +57,6 @@ defmodule AbsintheProtoTest do
         """,
         AbsintheProtoTest.Schema
       )
-    # result =
-    #   Absinthe.run( """
-    #       query {
-    #         __schema {
-    #           types {
-    #             name
-    #             fields {
-    #               name
-    #             }
-    #           }
-    #         }
-    #       }
-    #     """,
-    #     AbsintheProtoTest.Schema
-    #   )
-    #
-    IO.inspect(result)
+    assert {:ok, %{data: data}} = result
   end
 end

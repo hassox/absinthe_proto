@@ -19,6 +19,14 @@ Documentation can be generated with [ExDoc](https://github.com/elixir-lang/ex_do
 and published on [HexDocs](https://hexdocs.pm). Once published, the docs can
 be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_proto).
 
+"First, make it correct. Then, make it beautiful. Then, if you need to, make it performant. Chances are once you've made it beautiful you'll find it sufficiently performant" - Joe Armstrong
+
+[ ] Make it correct
+[ ] Make it beautiful
+[ ] Decide if it's not performant enough
+
+### Specifics
+
 [x] Basic messages
 [x] Repeated messages
 [x] Enums
@@ -28,7 +36,7 @@ be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_prot
 [x] Exclude fields
 [x] Overwrite Fields
 [x] Input Objects
-[ ] id alias
+[x] id alias
 [ ] Services (with manual resolvers)
 [ ] Foreign Keys
 [ ] Maps

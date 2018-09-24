@@ -38,3 +38,8 @@ message WithForeignKey {
   string user_id = 2;
   string user_with_an_id = 3;
 }
+
+service Service {
+  rpc GetBasic(Basic) returns (Basic);
+  rpc GetOneof(Oneof) returns (Oneof);
+}

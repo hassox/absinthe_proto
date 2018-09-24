@@ -97,5 +97,5 @@ defmodule AbsintheProto.Scalars do
   end
 
   def ensure_non_neg(n) when n >= 0, do: {:ok, n}
-  def ensure_non_neg(n), do: :error
+  def ensure_non_neg(_n), do: :error
 end

@@ -84,3 +84,16 @@ defmodule AbsintheProto.Test.WithForeignKey do
   field :user_with_an_id, 3, type: :string
 end
 
+defmodule AbsintheProto.Test.Service.Service do
+  @moduledoc false
+  use GRPC.Service, name: "absinthe_proto.test.Service"
+
+  rpc :GetBasic, AbsintheProto.Test.Basic, AbsintheProto.Test.Basic
+  rpc :GetOneof, AbsintheProto.Test.Oneof, AbsintheProto.Test.Oneof
+end
+
+defmodule AbsintheProto.Test.Service.Stub do
+  @moduledoc false
+  use GRPC.Stub, service: AbsintheProto.Test.Service.Service
+end
+

@@ -24,15 +24,34 @@ defmodule AbsintheProtoTest.Types do
       exclude_fields [:field_to_remove]
     end
 
-    # modify AbsintheProto.Test.Service do
-    #   exclude_fields [:foo]
-    #   update_field :my_method, resolve: {SomeModule, :resolve_foo}
-    #   update_field :my_other_method, resolve: {SomeModule, :resolve_foo}
-    # end
+    modify AbsintheProto.Test.Service.Service do
+      update_rpc :get_basic, resolve: {__MODULE__, :resolve_get_basic}
+      update_rpc :get_oneof, resolve: {__MODULE__, :resolve_get_oneof}
+    end
   end
 
   build Google.Protobuf, otp_app: :protobuf
 
   def resolve_extra(_, _, _), do: {:ok, 77}
   def resolve_another_field(_, _, _), do: {:ok, "Another field yo"}
+
+  def resolve_get_basic(_p, _args, _r) do
+    {
+      :ok,
+      AbsintheProto.Test.Basic.new(%{
+        name: "Fred",
+        enum_value: 0,
+      })
+    }
+  end
+
+  def resolve_get_oneof(_p, _args, _r) do
+    {
+      :ok,
+      AbsintheProto.Test.Oneof.new(%{
+        id: "Fred",
+        union_enum: {:int_value, 345}
+      })
+    }
+  end
 end
