@@ -41,6 +41,8 @@ defmodule AbsintheProto.DSL do
       id_alias -> Module.put_attribute(__CALLER__.module, :id_alias, id_alias)
     end
 
+    foreign_keys = Keyword.get(opts, :foreign_keys, [])
+
     mods =
       case Keyword.take(opts, [:paths, :otp_app]) do
         nil -> nil
@@ -63,9 +65,12 @@ defmodule AbsintheProto.DSL do
 
     Module.eval_quoted(__CALLER__, blk)
 
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, apply_id_alias(__CALLER__.module))
+    msgs =
+      __CALLER__.module
+      |> apply_id_alias()
+      |> apply_foreign_keys(foreign_keys)
 
-    msgs = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
 
     for {_, obj} <- msgs do
       case obj do
@@ -284,6 +289,23 @@ defmodule AbsintheProto.DSL do
   defp apply_id_alias(gql_messages, id_alias) do
     apply_id_alias gql_messages, fn {field_id, _} ->
       field_id == id_alias
+    end
+  end
+
+  defp apply_foreign_keys(gql_messages, []), do: gql_messages
+  defp apply_foreign_keys(gql_messages, foreign_keys) do
+    Enum.map gql_messages, fn
+      {obj_id, %AbsintheProto.Objects.GqlObject{} = obj} ->
+        # go over the fields defined and see if they match
+        new_fields =
+          obj.fields
+          |> Enum.map(fn {id, field} -> maybe_create_foreign_key({id, field}, obj, foreign_keys) end)
+          |> Enum.filter(&(&1 != nil))
+          |> Enum.into(%{})
+
+        {obj_id, %{obj | fields: Map.merge(obj.fields, new_fields)}}
+      item ->
+        item
     end
   end
 
@@ -567,7 +589,7 @@ defmodule AbsintheProto.DSL do
 
   defp proto_fields(field_props, existing, name_opts) do
     for props <- field_props, into: existing do
-      f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom, orig?: true}
+      f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom, orig?: true, list?: props.repeated?}
       attrs =
         []
         |> datatype_for_props(props, name_opts)
@@ -610,6 +632,32 @@ defmodule AbsintheProto.DSL do
   end
 
   defp enum_resolver_for_props(attrs, _), do: attrs
+
+  defp maybe_create_foreign_key({_id, field}, gql_obj, foreign_keys) do
+    if fk = Enum.find(foreign_keys, fn {_, fk} -> fk.matcher(gql_obj, field) end) do
+      {fk_name, fk} = fk
+      ident = fk.output_field_name(gql_obj, field)
+      dt = fk.output_field_type(gql_obj, field)
+      resolver =
+        if field.list? do
+          fk.many_resolver(gql_obj, field)
+        else
+          fk.one_resolver(gql_obj, field)
+        end
+      {
+        ident,
+        %AbsintheProto.Objects.GqlObject.GqlField{
+          identifier: ident,
+          attrs: [
+            type: (quote do: unquote(dt)),
+            resolve: (quote do: unquote(resolver)),
+          ],
+        }
+      }
+    else
+      nil
+    end
+  end
 
   defp remove_fields(msgs, %AbsintheProto.Objects.GqlObject{} = obj, mod, fields) do
     # remove oneof fields

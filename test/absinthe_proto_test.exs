@@ -19,6 +19,11 @@ defmodule AbsintheProtoTest do
                 stringValue
                 intValue
                 enumValue
+                userToken
+                user {
+                 id
+                 token
+                }
                 __typename
               }
             }
@@ -58,5 +63,6 @@ defmodule AbsintheProtoTest do
         AbsintheProtoTest.Schema
       )
     assert {:ok, %{data: data}} = result
+    IO.inspect(data)
   end
 end

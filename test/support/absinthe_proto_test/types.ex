@@ -1,10 +1,13 @@
 defmodule AbsintheProtoTest.Types do
   use AbsintheProto
 
+  alias AbsintheProto.Objects.ForeignKey
+
   # build all proto messages found within a namespace
   build AbsintheProto.Test,
         paths: Path.wildcard("#{__DIR__}/../../protos/absinthe_proto/**/*.ex"),
-        id_alias: :token
+        id_alias: :token,
+        foreign_keys: [user: AbsintheProtoTest.ForeignKeys.User]
   do
     # create input objects when other apis need to use them
     input_objects [AbsintheProto.Test.User, AbsintheProto.Test.Oneof]
@@ -51,6 +54,18 @@ defmodule AbsintheProtoTest.Types do
       AbsintheProto.Test.Oneof.new(%{
         id: "Fred",
         union_enum: {:int_value, 345}
+      })
+    }
+  end
+
+
+  def test_user_resolver(_, _, _) do
+    {
+      :ok,
+      AbsintheProto.Test.User.new(%{
+        token: "ABCDE",
+        name: "Bob Belcher",
+        extra_field: 34
       })
     }
   end

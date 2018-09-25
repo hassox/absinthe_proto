@@ -26,6 +26,7 @@ message Oneof {
     int32 int_value = 3;
     Basic.SimpleEnum enum_value = 4;
     uint64 field_to_remove = 5;
+    string user_token = 6;
   }
 }
 
@@ -35,8 +36,7 @@ message RepeatedNested {
 
 message WithForeignKey {
   string id = 1;
-  string user_id = 2;
-  string user_with_an_id = 3;
+  string user_token = 2;
 }
 
 service Service {

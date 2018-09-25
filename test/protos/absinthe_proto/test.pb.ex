@@ -54,6 +54,7 @@ defmodule AbsintheProto.Test.Oneof do
   field :int_value, 3, type: :int32, oneof: 0
   field :enum_value, 4, type: AbsintheProto.Test.Basic.SimpleEnum, enum: true, oneof: 0
   field :field_to_remove, 5, type: :uint64, oneof: 0
+  field :user_token, 6, type: :string, oneof: 0
 end
 
 defmodule AbsintheProto.Test.RepeatedNested do
@@ -73,15 +74,13 @@ defmodule AbsintheProto.Test.WithForeignKey do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    id:              String.t,
-    user_id:         String.t,
-    user_with_an_id: String.t
+    id:         String.t,
+    user_token: String.t
   }
-  defstruct [:id, :user_id, :user_with_an_id]
+  defstruct [:id, :user_token]
 
   field :id, 1, type: :string
-  field :user_id, 2, type: :string
-  field :user_with_an_id, 3, type: :string
+  field :user_token, 2, type: :string
 end
 
 defmodule AbsintheProto.Test.Service.Service do
