@@ -1,8 +1,8 @@
 # AbsintheProto
 
-**TODO: Add description**
+Maps grpc services to grapqhql.
 
-## Installation
+This is alpha and not ready for production.
 
 If [available in Hex](https://hex.pm/docs/publish), the package can be installed
 by adding `absinthe_proto` to your list of dependencies in `mix.exs`:
@@ -37,7 +37,7 @@ be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_prot
 [x] Overwrite Fields
 [x] Input Objects
 [x] id alias
-[ ] Services (with manual resolvers)
-[ ] Foreign Keys
+[x] Services (with manual resolvers)
+[x] Foreign Keys
 [ ] Maps
 [ ] Service Resolvers
