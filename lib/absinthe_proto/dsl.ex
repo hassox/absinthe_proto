@@ -87,19 +87,37 @@ defmodule AbsintheProto.DSL do
             end
           end
 
-        %AbsintheProto.Objects.GqlService{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          field_ast = for {id, %{attrs: attrs}} <- fields do
-            unless Keyword.has_key?(attrs, :resolve) do
-              raise "no resolver specified for #{obj_id}##{id}"
+        %AbsintheProto.Objects.GqlService{identifier: obj_id, attrs: obj_attrs, fields: fields} = srv ->
+          query_field_ast =
+            for {id, field} <- fields,
+                field.identifier in srv.queries
+            do
+              attrs = service_attrs(field, srv)
+              quote do
+                field unquote(id), unquote(attrs)
+              end
             end
-            quote do
-              field unquote(id), unquote(attrs)
+
+          mutation_field_ast =
+            for {id, field} <- fields,
+                field.identifier not in srv.queries
+            do
+              attrs = service_attrs(field, srv)
+              quote do
+                field unquote(id), unquote(attrs)
+              end
             end
-          end
+
+          query_obj_id = :"#{obj_id}__queries"
+          mutation_obj_id = :"#{obj_id}__mutations"
 
           quote do
-            object unquote(obj_id), unquote(obj_attrs) do
-              unquote_splicing(field_ast)
+            object unquote(query_obj_id), unquote(obj_attrs) do
+              unquote_splicing(query_field_ast)
+            end
+
+            object unquote(mutation_obj_id), unquote(obj_attrs) do
+              unquote_splicing(mutation_field_ast)
             end
           end
 
@@ -209,6 +227,40 @@ defmodule AbsintheProto.DSL do
     {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
 
     do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
+  end
+
+  defmacro service_resolver(rmod) do
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+    obj_name = gql_object_name(mod)
+    obj = Map.get(gql_messages, obj_name)
+    {resolver_mod, _} = Module.eval_quoted(__CALLER__, rmod)
+
+    unless proto_type(mod) == :service do
+      raise "cannot update_field on non message"
+    end
+
+    new_msgs = Map.put(gql_messages, obj.identifier, %{obj | resolver_module: resolver_mod})
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
+  end
+
+  defmacro rpc_queries(raw_queries) do
+    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
+    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
+    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+    obj_name = gql_object_name(mod)
+    obj = Map.get(gql_messages, obj_name)
+    {queries, _} = Module.eval_quoted(__CALLER__, raw_queries)
+
+    unless proto_type(mod) == :service do
+      raise "cannot update_field on non message"
+    end
+
+    new_msgs = Map.put(gql_messages, obj.identifier, %{obj | queries: queries})
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
   end
 
   defmacro add_field(field_name, datatype, attrs \\ []) do
@@ -358,10 +410,12 @@ defmodule AbsintheProto.DSL do
     # we only want to create this once
     with obj when is_nil(obj) <- Map.get(gql_messages, obj_name) do
       input_objs =
-        for o <- proto_gql_object(:input, mod), into: %{}, do: {o.identifier, o}
+        for o <- proto_gql_object(:input, mod, ns), into: %{}, do: {o.identifier, o}
 
       gql_messages = Map.merge(gql_messages, input_objs)
       Module.put_attribute(within_mod, :proto_gql_messages, gql_messages)
+    else
+      _ -> nil
     end
   end
 
@@ -383,6 +437,7 @@ defmodule AbsintheProto.DSL do
   defp proto_gql_objects({:ok, mods}, ns) do
     mods
     |> Enum.flat_map(fn x -> proto_gql_object(x, ns) end)
+    |> List.flatten()
     |> Enum.filter(&(&1 != nil))
     |> Enum.into(%{}, fn i ->
       {i.identifier, i}
@@ -417,6 +472,7 @@ defmodule AbsintheProto.DSL do
       |> Enum.flat_map(&(&1))
 
     # need to go through and create new input objects for embedded messages
+    result =
     Enum.reduce mod.__message_props__.field_props, out, fn
       {_, %{embedded?: true, type: type}}, acc ->
         if within_namespace?(type, ns) do
@@ -428,6 +484,7 @@ defmodule AbsintheProto.DSL do
         end
       _, acc -> acc
     end
+    result
   end
 
   defp proto_gql_object(:enum, mod, _ns) do
@@ -455,7 +512,7 @@ defmodule AbsintheProto.DSL do
               props.embedded?,
               within_namespace?(props.type, ns),
               into: [],
-              do: proto_gql_object(:input, props.type)
+              do: proto_gql_object(:input, props.type, ns)
         objs ++ field_objs
       end
     other_objs = Enum.flat_map(other_objs, &(&1))
@@ -635,7 +692,7 @@ defmodule AbsintheProto.DSL do
 
   defp maybe_create_foreign_key({_id, field}, gql_obj, foreign_keys) do
     if fk = Enum.find(foreign_keys, fn {_, fk} -> fk.matcher(gql_obj, field) end) do
-      {fk_name, fk} = fk
+      {_fk_name, fk} = fk
       ident = fk.output_field_name(gql_obj, field)
       dt = fk.output_field_type(gql_obj, field)
       resolver =
@@ -713,6 +770,21 @@ defmodule AbsintheProto.DSL do
       end
     rescue
       _ -> :unknown
+    end
+  end
+
+  defp service_attrs(%{attrs: attrs} = field, srv) do
+    if Keyword.has_key?(attrs, :resolve) do
+      attrs
+    else
+      if srv.resolver_module == nil do
+        raise "no resolver specified for #{srv.identifier}##{field.identifier}"
+      else
+        resolver_mod = srv.resolver_module
+        field_id = field.identifier
+
+        [resolve: quote do: {unquote(resolver_mod), unquote(field_id)}] ++ attrs
+      end
     end
   end
 

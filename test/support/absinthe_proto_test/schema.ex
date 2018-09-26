@@ -13,7 +13,7 @@ defmodule AbsintheProtoTest.Schema do
     field :repeated_nested, :absinthe_proto__test__repeated_nested, resolve: &test_repeated_nested_resolver/3
     field :file_descriptor_set, :google__protobuf__file_descriptor_set, resolve: &descriptor_resolver/3
 
-    import_fields :absinthe_proto__test__service__service
+    import_fields :absinthe_proto__test__service__service__queries
   end
 
   def noop_resolver(_, _, _), do: {:ok, nil}

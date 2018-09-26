@@ -40,6 +40,11 @@ defmodule AbsintheProto.Scalars do
   scalar :uint32 do
     parse fn
       nil -> {:ok, nil}
+      %Absinthe.Blueprint.Input.String{value: val} ->
+        case Integer.parse(val) do
+          :error -> :error
+          {i, _} -> ensure_non_neg(i)
+        end
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
@@ -47,7 +52,10 @@ defmodule AbsintheProto.Scalars do
         end
       n when is_integer(n) -> ensure_non_neg(n)
       n when is_float(n) -> ensure_non_neg(Kernel.trunc(n))
-      _ -> :error
+      %Absinthe.Blueprint.Input.Integer{value: val} -> ensure_non_neg(val)
+      s ->
+        IO.puts("GOT: #{inspect(s)}")
+        :error
     end
 
     serialize fn
@@ -60,6 +68,11 @@ defmodule AbsintheProto.Scalars do
   scalar :int64 do
     parse fn
       nil -> {:ok, nil}
+      %Absinthe.Blueprint.Input.String{value: val} ->
+        case Integer.parse(val) do
+          :error -> :error
+          {i, _} -> {:ok, i}
+        end
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
@@ -67,6 +80,7 @@ defmodule AbsintheProto.Scalars do
         end
       n when is_integer(n) -> {:ok, n}
       n when is_float(n) -> {:ok, Kernel.trunc(n)}
+      %Absinthe.Blueprint.Input.Integer{value: val} -> {:ok, val}
       _ -> :error
     end
 
@@ -80,6 +94,11 @@ defmodule AbsintheProto.Scalars do
   scalar :uint64 do
     parse fn
       nil -> {:ok, nil}
+      %Absinthe.Blueprint.Input.String{value: val} ->
+        case Integer.parse(val) do
+          :error -> :error
+          {i, _} -> ensure_non_neg(i)
+        end
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
@@ -87,6 +106,7 @@ defmodule AbsintheProto.Scalars do
         end
       n when is_integer(n) -> ensure_non_neg(n)
       n when is_float(n) -> ensure_non_neg(Kernel.trunc(n))
+      %Absinthe.Blueprint.Input.Integer{value: val} -> ensure_non_neg(val)
       _ -> :error
     end
 
@@ -97,5 +117,5 @@ defmodule AbsintheProto.Scalars do
   end
 
   def ensure_non_neg(n) when n >= 0, do: {:ok, n}
-  def ensure_non_neg(_n), do: :error
+  def ensure_non_neg(_n), do: {:error, "negative value found"}
 end

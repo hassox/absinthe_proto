@@ -28,7 +28,10 @@ defmodule AbsintheProtoTest.Types do
     end
 
     modify AbsintheProto.Test.Service.Service do
-      update_rpc :get_basic, resolve: {__MODULE__, :resolve_get_basic}
+      rpc_queries [:get_basic, :get_oneof]
+      service_resolver __MODULE__
+
+      # update_rpc :get_basic, []
       update_rpc :get_oneof, resolve: {__MODULE__, :resolve_get_oneof}
     end
   end
@@ -38,7 +41,7 @@ defmodule AbsintheProtoTest.Types do
   def resolve_extra(_, _, _), do: {:ok, 77}
   def resolve_another_field(_, _, _), do: {:ok, "Another field yo"}
 
-  def resolve_get_basic(_p, _args, _r) do
+  def get_basic(_p, _args, _r) do
     {
       :ok,
       AbsintheProto.Test.Basic.new(%{
