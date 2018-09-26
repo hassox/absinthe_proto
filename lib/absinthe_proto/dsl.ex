@@ -47,13 +47,23 @@ defmodule AbsintheProto.DSL do
       case Keyword.take(opts, [:paths, :otp_app]) do
         nil -> nil
         [paths: load_files] when is_list(load_files) ->
-          for path <- load_files, do: Code.compile_file(path)
+          load_files = Enum.map(load_files, &Path.expand/1)
+          # Kernel.ParallelCompiler.require(load_files)
+          orig_compiler_opts = Code.compiler_options()
+          Code.compiler_options(%{orig_compiler_opts | ignore_module_conflict: true})
+          for path <- load_files do
+            Code.require_file(path)
+            Code.compile_file(path)
+          end
+          Code.compiler_options(orig_compiler_opts)
           Enum.map(:code.all_loaded(), fn {m, _} -> m end)
 
         [otp_app: app] when is_atom(app) ->
           Application.ensure_all_started(app)
           {:ok, m} = :application.get_key(app, :modules)
           m
+        [] ->
+          raise "path or otp_app should be passed to AbsintheProto.DSL.build"
         _ ->
           raise "unknown options given to AbsintheProto.DSL.build"
       end
@@ -75,11 +85,20 @@ defmodule AbsintheProto.DSL do
     for {_, obj} <- msgs do
       case obj do
         %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          field_ast = for {id, %{attrs: attrs}} <- fields do
-            quote do
-              field unquote(id), unquote(attrs)
+          field_ast =
+            if Map.size(fields) == 0 do
+              [
+                quote do
+                  field :noop, :boolean
+                end
+              ]
+            else
+              for {id, %{attrs: attrs}} <- fields do
+                quote do
+                  field unquote(id), unquote(attrs)
+                end
+              end
             end
-          end
 
           quote do
             object unquote(obj_id), unquote(obj_attrs) do
@@ -220,7 +239,7 @@ defmodule AbsintheProto.DSL do
     obj = Map.get(gql_messages, obj_name)
 
     unless proto_type(mod) == :service do
-      raise "cannot update_field on non message"
+      raise "cannot update_rpc on non service"
     end
 
     {new_attrs, _} = Module.eval_quoted(__CALLER__, attrs)
@@ -238,8 +257,16 @@ defmodule AbsintheProto.DSL do
     obj = Map.get(gql_messages, obj_name)
     {resolver_mod, _} = Module.eval_quoted(__CALLER__, rmod)
 
+    unless mod do
+      raise "not modifying a service"
+    end
+
     unless proto_type(mod) == :service do
-      raise "cannot update_field on non message"
+      raise "cannot set service_resolver on non service"
+    end
+
+    unless obj do
+      raise "cannot find object for #{obj_name}"
     end
 
     new_msgs = Map.put(gql_messages, obj.identifier, %{obj | resolver_module: resolver_mod})
@@ -311,6 +338,7 @@ defmodule AbsintheProto.DSL do
 
   defp apply_id_alias(gql_messages, id_alias) when is_function(id_alias) do
     Enum.reduce gql_messages, gql_messages, fn
+      {_, %AbsintheProto.Objects.GqlObject{fields: %{id: _}}}, acc -> acc
       {obj_id, %AbsintheProto.Objects.GqlObject{} = obj}, acc ->
         case Enum.find(obj.fields, id_alias) do
           nil -> acc
