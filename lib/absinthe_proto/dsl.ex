@@ -63,6 +63,7 @@ defmodule AbsintheProto.DSL do
           IO.inspect(mod_strings)
           mod_strings
           |> Enum.flat_map(&(&1))
+          |> Enum.map(&(:"Elixir.#{&1}"))
 
         [otp_app: app] when is_atom(app) ->
           Application.ensure_all_started(app)
