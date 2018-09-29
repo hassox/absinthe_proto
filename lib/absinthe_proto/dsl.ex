@@ -56,14 +56,12 @@ defmodule AbsintheProto.DSL do
             |> to_string()
             |> String.split("\n")
             |> Enum.filter(&(&1 != ""))
-            # |> Enum.map(&(:"Elixir.#{&1}"))
           end
+          |> Enum.flat_map(&(&1))
 
           IO.puts("MOD STRINGS")
           IO.inspect(mod_strings)
-          mod_strings
-          |> Enum.flat_map(&(&1))
-          |> Enum.map(&(:"Elixir.#{&1}"))
+          Enum.map(mod_strings, &(:"Elixir.#{&1}"))
 
         [otp_app: app] when is_atom(app) ->
           Application.ensure_all_started(app)
@@ -75,6 +73,7 @@ defmodule AbsintheProto.DSL do
           raise "unknown options given to AbsintheProto.DSL.build"
       end
 
+    IO.puts("MODS")
     IO.inspect(mods)
 
     Module.put_attribute(__CALLER__.module, :proto_namespace, ns)
