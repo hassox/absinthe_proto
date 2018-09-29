@@ -48,6 +48,7 @@ defmodule AbsintheProto.DSL do
         nil -> nil
         [paths: load_files] when is_list(load_files) ->
           load_files = Enum.map(load_files, &Path.expand/1)
+          mod_strings =
           for path <- load_files, into: [] do
             "cat #{path} | grep defmodule | awk '{print $2}' | sort"
             |> String.to_charlist()
@@ -55,8 +56,12 @@ defmodule AbsintheProto.DSL do
             |> to_string()
             |> String.split("\n")
             |> Enum.filter(&(&1 != ""))
-            |> Enum.map(&(:"Elixir.#{&1}"))
+            # |> Enum.map(&(:"Elixir.#{&1}"))
           end
+
+          IO.puts("MOD STRINGS")
+          IO.inspect(mod_strings)
+          mod_strings
           |> Enum.flat_map(&(&1))
 
         [otp_app: app] when is_atom(app) ->
