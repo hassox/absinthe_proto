@@ -59,8 +59,6 @@ defmodule AbsintheProto.DSL do
           end
           |> Enum.flat_map(&(&1))
 
-          IO.puts("MOD STRINGS")
-          IO.inspect(mod_strings)
           Enum.map(mod_strings, &(:"Elixir.#{&1}"))
 
         [otp_app: app] when is_atom(app) ->
@@ -72,9 +70,6 @@ defmodule AbsintheProto.DSL do
         _ ->
           raise "unknown options given to AbsintheProto.DSL.build"
       end
-
-    IO.puts("MODS")
-    IO.inspect(mods)
 
     Module.put_attribute(__CALLER__.module, :proto_namespace, ns)
 
