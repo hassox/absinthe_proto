@@ -688,23 +688,23 @@ defmodule AbsintheProto.DSL do
     end
   end
 
-  defp datatype_for_props(attrs, props, name_opts)
-  defp datatype_for_props(attrs, %{embedded?: true, type: type}, name_opts),
+  def datatype_for_props(attrs, props, name_opts)
+  def datatype_for_props(attrs, %{embedded?: true, type: type}, name_opts),
     do: Keyword.put(attrs, :type, gql_object_name(type, name_opts))
 
-  defp datatype_for_props(attrs, %{enum?: true, enum_type: type}, _),
+  def datatype_for_props(attrs, %{enum?: true, enum_type: type}, _),
     do: Keyword.put(attrs, :type, gql_object_name(type))
 
-  defp datatype_for_props(attrs, %{type: type}, _),
+  def datatype_for_props(attrs, %{type: type}, _),
     do: Keyword.put(attrs, :type, AbsintheProto.Scalars.proto_to_gql_scalar(type))
 
-  defp wrap_datatype(attrs, %{repeated?: true}) do
+  def wrap_datatype(attrs, %{repeated?: true}) do
     datatype = Keyword.get(attrs, :type)
     content = quote do: %Absinthe.Type.List{of_type: %Absinthe.Type.NonNull{of_type: unquote(datatype)}}
     Keyword.put(attrs, :type, content)
   end
 
-  defp wrap_datatype(attrs, _), do: attrs
+  def wrap_datatype(attrs, _), do: attrs
 
   defp enum_resolver_for_props(attrs, %{name_atom: name, enum?: true, enum_type: type}) do
     res =
@@ -819,7 +819,7 @@ defmodule AbsintheProto.DSL do
     end
   end
 
-  defp gql_object_name(mod, other_parts \\ []) do
+  def gql_object_name(mod, other_parts \\ []) do
     [Macro.underscore(mod) | other_parts]
     |> Enum.map(fn i ->
       i |> to_string() |> Macro.underscore() |> String.replace("/", "__")
