@@ -48,15 +48,18 @@ defmodule AbsintheProto.DSL do
         nil -> nil
         [paths: load_files] when is_list(load_files) ->
           load_files = Enum.map(load_files, &Path.expand/1)
-          # Kernel.ParallelCompiler.require(load_files)
-          orig_compiler_opts = Code.compiler_options()
-          Code.compiler_options(%{orig_compiler_opts | ignore_module_conflict: true})
-          for path <- load_files do
-            Code.require_file(path)
-            Code.compile_file(path)
+          mods =
+          for path <- load_files, into: [] do
+            "cat #{path} | grep defmodule | awk '{print $2}' | sort"
+            |> String.to_charlist()
+            |> :os.cmd()
+            |> to_string()
+            |> String.split("\n")
+            |> Enum.filter(&(&1 != ""))
+            |> Enum.map(&(:"Elixir.#{&1}"))
+            |> Enum.map(fn x -> Code.ensure_loaded(:"#{x}"); x end)
           end
-          Code.compiler_options(orig_compiler_opts)
-          Enum.map(:code.all_loaded(), fn {m, _} -> m end)
+          |> Enum.flat_map(&(&1))
 
         [otp_app: app] when is_atom(app) ->
           Application.ensure_all_started(app)
