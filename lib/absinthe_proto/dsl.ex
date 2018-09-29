@@ -60,7 +60,7 @@ defmodule AbsintheProto.DSL do
           |> Enum.flat_map(&(&1))
 
         [otp_app: app] when is_atom(app) ->
-          # Application.ensure_all_started(app)
+          Application.ensure_all_started(app)
           {:ok, m} = :application.get_key(app, :modules)
           m
         [] ->
