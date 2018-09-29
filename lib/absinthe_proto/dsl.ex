@@ -69,6 +69,8 @@ defmodule AbsintheProto.DSL do
           raise "unknown options given to AbsintheProto.DSL.build"
       end
 
+    IO.inspect(mods)
+
     Module.put_attribute(__CALLER__.module, :proto_namespace, ns)
 
     msgs = AbsintheProto.DSL.messages_from_proto_namespace(ns, mods)
