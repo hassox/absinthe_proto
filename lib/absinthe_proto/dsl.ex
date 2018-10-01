@@ -710,8 +710,10 @@ defmodule AbsintheProto.DSL do
     res =
       quote do
         fn
-          %{unquote(name) => value}, _, _ ->
+          %{unquote(name) => value}, _, _ when is_integer(value) ->
             {:ok, unquote(type).key(value)}
+          %{unquote(name) => value}, _, _ when is_atom(value) ->
+            {:ok, value |> unquote(type).value() |> unquote(type).key()}
           _, _, _ ->
             {:ok, nil}
         end
