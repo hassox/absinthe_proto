@@ -15,7 +15,6 @@ defmodule AbsintheProto.GoogleTypes do
       Google.Protobuf.FloatValue,
       Google.Protobuf.Int32Value,
       Google.Protobuf.Int64Value,
-      Google.Protobuf.NullValue,
       Google.Protobuf.StringValue,
       Google.Protobuf.UInt32Value,
       Google.Protobuf.UInt64Value,
