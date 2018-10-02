@@ -657,8 +657,12 @@ defmodule AbsintheProto.DSL do
         for {ident, _oneof_id} <- oneofs, into: fields do
           resolver = quote location: :keep do
             fn
-              %{unquote(ident) => {field_name, value}} = thing, _, _ ->
-                {:ok, Map.put(%{}, field_name, value)}
+              %{unquote(ident) => oneof_value}, _, _ ->
+                case oneof_value do
+                  nil -> {:ok, nil}
+                  {field_name, value} -> {:ok, Map.put(%{}, field_name, value)}
+                  map -> {:ok, map}
+                end
               _, _, _ -> {:ok, nil}
             end
           end
