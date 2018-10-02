@@ -9,6 +9,18 @@ defmodule AbsintheProto.GoogleTypes do
 
   build Google, otp_app: :google_protos do
     input_objects [
+      Google.Protobuf.BytesValue,
+      Google.Protobuf.BoolValue,
+      Google.Protobuf.DoubleValue,
+      Google.Protobuf.Duration,
+      Google.Protobuf.FloatValue,
+      Google.Protobuf.Int32Value,
+      Google.Protobuf.Int64Value,
+      Google.Protobuf.ListValue,
+      Google.Protobuf.NullValue,
+      Google.Protobuf.StringValue,
+      Google.Protobuf.UInt32Value,
+      Google.Protobuf.UInt64Value,
       Google.Protobuf.StringValue,
       Google.Protobuf.Timestamp,
     ]
