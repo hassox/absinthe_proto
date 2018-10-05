@@ -718,6 +718,17 @@ defmodule AbsintheProto.DSL do
             {:ok, unquote(type).key(value)}
           %{unquote(name) => value}, _, _ when is_atom(value) ->
             {:ok, value |> unquote(type).value() |> unquote(type).key()}
+          %{unquote(name) => value}, _, _ when is_binary(value) ->
+            valid_value? =
+              unquote(type).__message_props__.field_props
+              |> Enum.map(fn {_, f} -> to_string(f.name_atom) end)
+              |> Enum.member?(value)
+
+            if valid_value? do
+              {:ok, String.to_atom(value)}
+            else
+              {:error, :invalid_enum_value}
+            end
           _, _, _ ->
             {:ok, nil}
         end
