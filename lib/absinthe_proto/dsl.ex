@@ -149,6 +149,16 @@ defmodule AbsintheProto.DSL do
               field unquote(id), unquote(attrs)
             end
           end
+          field_ast =
+            if Enum.empty?(field_ast) do
+              [
+                quote do
+                  field :noop, :boolean
+                end
+              ]
+            else
+              field_ast
+            end
 
           quote do
             input_object unquote(obj_id), unquote(obj_attrs) do
