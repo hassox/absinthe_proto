@@ -251,12 +251,23 @@ defmodule AbsintheProto.DSL do
     obj_name = gql_object_name(mod)
     obj = Map.get(gql_messages, obj_name)
 
-    unless proto_type(mod) == :service do
-      raise "cannot update_rpc on non service"
+    case obj do
+      %AbsintheProto.Objects.GqlService{} ->
+        :nothing
+      %mod{} ->
+        raise "cannot update rpc call on #{mod}"
     end
 
     {new_attrs, _} = Module.eval_quoted(__CALLER__, attrs)
     {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
+    skip_args = Keyword.get(new_attrs, :skip_args, [])
+    required_args = Keyword.get(new_attrs, :required_args, [])
+    new_skip_args = Map.put(obj.skip_args, field_name, skip_args)
+    new_required_args = Map.put(obj.required_args, field_name, required_args)
+    new_attrs = Keyword.drop(new_attrs, [:skip_args, :required_args])
+
+    obj = %{obj | skip_args: new_skip_args, required_args: new_required_args}
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, obj)
 
     do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
   end
@@ -832,18 +843,45 @@ defmodule AbsintheProto.DSL do
   end
 
   defp service_attrs(%{attrs: attrs} = field, srv) do
-    if Keyword.has_key?(attrs, :resolve) do
-      attrs
-    else
-      if srv.resolver_module == nil do
-        raise "no resolver specified for #{srv.identifier}##{field.identifier}"
+    attrs =
+      if Keyword.has_key?(attrs, :resolve) do
+        attrs
       else
-        resolver_mod = srv.resolver_module
-        field_id = field.identifier
+        if srv.resolver_module == nil do
+          raise "no resolver specified for #{srv.identifier}##{field.identifier}"
+        else
+          resolver_mod = srv.resolver_module
+          field_id = field.identifier
 
-        [resolve: quote do: {unquote(resolver_mod), unquote(field_id)}] ++ attrs
+          [resolve: quote do: {unquote(resolver_mod), unquote(field_id)}] ++ attrs
+        end
       end
-    end
+
+    skip_args = Map.get(srv.skip_args, field.identifier, [])
+    required_args = Map.get(srv.required_args, field.identifier, [])
+
+    args =
+      attrs
+      |> Keyword.get(:args, [])
+      |> Enum.reduce([], fn {name, arg}, acc ->
+        type = Keyword.get(arg, :type)
+        if name in skip_args do
+          acc
+        else
+          if name in required_args do
+            new_type =
+              quote location: :keep do
+                Absinthe.Schema.Notation.non_null(unquote(type))
+              end
+            [{name, Keyword.put(arg, :type, new_type)} | acc]
+          else
+            [{name, arg} | acc]
+          end
+        end
+      end)
+      |> Enum.reverse()
+
+    Keyword.put(attrs, :args, args)
   end
 
   def gql_object_name(mod, other_parts \\ []) do

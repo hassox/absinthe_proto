@@ -12,7 +12,7 @@ defmodule AbsintheProto.Objects do
   end
 
   defmodule GqlService do
-    defstruct AbsintheProto.ObjectFields.object_fields() ++ [resolver_module: nil, queries: []]
+    defstruct AbsintheProto.ObjectFields.object_fields() ++ [resolver_module: nil, queries: [], skip_args: %{}, required_args: %{}]
   end
 
   defmodule GqlObject do
