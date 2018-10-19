@@ -4,6 +4,7 @@ defmodule AbsintheProtoTest.Schema do
   require AbsintheProtoTest.Types
 
   import_types AbsintheProto.Scalars
+  import_types AbsintheProto.GoogleTypes
   import_types AbsintheProtoTest.Types
 
   query do

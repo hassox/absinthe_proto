@@ -3,12 +3,15 @@ defmodule AbsintheProtoTest.Types do
 
   alias AbsintheProto.Objects.ForeignKey
 
+  IO.inspect(Path.wildcard("#{__DIR__}/../../protos/**/*.pb.ex"))
+
   # build all proto messages found within a namespace
   build AbsintheProto.Test,
-        paths: Path.wildcard("#{__DIR__}/../../protos/absinthe_proto/**/*.ex"),
+        paths: Path.wildcard("#{__DIR__}/../../protos/**/*.pb.ex"),
         id_alias: :token,
         foreign_keys: [user: AbsintheProtoTest.ForeignKeys.User]
   do
+
     # create input objects when other apis need to use them
     input_objects [AbsintheProto.Test.User, AbsintheProto.Test.Oneof]
 

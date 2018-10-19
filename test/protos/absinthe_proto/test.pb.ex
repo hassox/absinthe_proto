@@ -57,6 +57,18 @@ defmodule AbsintheProto.Test.Oneof do
   field :user_token, 6, type: :string, oneof: 0
 end
 
+defmodule AbsintheProto.Test.WithAny do
+  @moduledoc false
+  use Protobuf, syntax: :proto3
+
+  @type t :: %__MODULE__{
+    anything: Google.Protobuf.Any.t
+  }
+  defstruct [:anything]
+
+  field :anything, 1, type: Google.Protobuf.Any
+end
+
 defmodule AbsintheProto.Test.RepeatedNested do
   @moduledoc false
   use Protobuf, syntax: :proto3

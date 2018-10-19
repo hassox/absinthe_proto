@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package absinthe_proto.test;
 
+import "google/protobuf/any.proto";
+
 message Basic {
   enum SimpleEnum {
     DEFAULT = 0;
@@ -28,6 +30,10 @@ message Oneof {
     uint64 field_to_remove = 5;
     string user_token = 6;
   }
+}
+
+message WithAny {
+  google.protobuf.Any anything = 1;
 }
 
 message RepeatedNested {
