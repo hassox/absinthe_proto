@@ -32,10 +32,10 @@ defmodule AbsintheProto.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:protobuf, github: "tony612/protobuf-elixir", override: true},
-      {:grpc, github: "tony612/grpc-elixir", override: true},
-      # {:protobuf, ">= 0.0.0"},
-      # {:grpc, ">= 0.0.0"},
+      # {:protobuf, github: "tony612/protobuf-elixir", override: true},
+      # {:grpc, github: "tony612/grpc-elixir", override: true},
+      {:protobuf, ">= 0.0.0"},
+      {:grpc, ">= 0.0.0"},
       {:google_protos, "~> 0.1"},
       {:absinthe, "~>1.4"},
     ]
