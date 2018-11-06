@@ -1,6 +1,6 @@
 # AbsintheProto
 
-Maps grpc services to grapqhql.
+Maps grpc services to graphql.
 
 This is alpha and not ready for production.
 
@@ -21,23 +21,23 @@ be found at [https://hexdocs.pm/absinthe_proto](https://hexdocs.pm/absinthe_prot
 
 "First, make it correct. Then, make it beautiful. Then, if you need to, make it performant. Chances are once you've made it beautiful you'll find it sufficiently performant" - Joe Armstrong
 
-[ ] Make it correct
-[ ] Make it beautiful
-[ ] Decide if it's not performant enough
+- [ ] Make it correct
+- [ ] Make it beautiful
+- [ ] Decide if it's not performant enough
 
 ### Specifics
 
-[x] Basic messages
-[x] Repeated messages
-[x] Enums
-[x] Oneofs
-[x] Loading in app
-[x] Loading Other app
-[x] Exclude fields
-[x] Overwrite Fields
-[x] Input Objects
-[x] id alias
-[x] Services (with manual resolvers)
-[x] Foreign Keys
-[ ] Maps
-[ ] Service Resolvers
+- [x] Basic messages
+- [x] Repeated messages
+- [x] Enums
+- [x] Oneofs
+- [x] Loading in app
+- [x] Loading Other app
+- [x] Exclude fields
+- [x] Overwrite Fields
+- [x] Input Objects
+- [x] id alias
+- [x] Services (with manual resolvers)
+- [x] Foreign Keys
+- [ ] Maps
+- [ ] Service Resolvers
