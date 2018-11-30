@@ -110,6 +110,7 @@ defmodule AbsintheProto.DSL do
           end
 
         %AbsintheProto.Objects.GqlService{identifier: obj_id, attrs: obj_attrs, fields: fields} = srv ->
+          ensure_service_resolver!(srv)
           query_field_ast =
             for {id, field} <- fields,
                 field.identifier in srv.queries
@@ -179,6 +180,19 @@ defmodule AbsintheProto.DSL do
           end
       end
     end
+  end
+
+  defmacro ignore_objects(proto_mods) do
+    {mods, _} = Module.eval_quoted(__CALLER__, proto_mods)
+    mods = List.wrap(mods)
+
+    new_msgs =
+      __CALLER__.module
+      |> Module.get_attribute(:proto_gql_messages)
+      |> Enum.reject(fn {_, %{module: mod}} -> Enum.member?(mods, mod) end)
+      |> Enum.into(%{})
+
+    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
   end
 
   defmacro modify(proto_mod, blk) do
@@ -903,4 +917,31 @@ defmodule AbsintheProto.DSL do
     """
   end
   defp maybe_raise_not_modifying_object(_, _, _), do: :nothing
+
+  defp ensure_service_resolver!(%{module: mod, resolver_module: nil}) do
+    raise "no service resolver set for #{mod}"
+  end
+
+  defp ensure_service_resolver!(%{module: mod, fields: fields, resolver_module: resolver}) do
+    defined_funcs = resolver.__info__(:functions)
+
+    non_defined_funcs =
+      fields
+      |> Map.keys()
+      |> Enum.reject(&(Enum.member?(defined_funcs, {&1, 3})))
+
+    case non_defined_funcs do
+      [] -> true
+      _ ->
+        missing_funcs = Enum.join(non_defined_funcs, ", ")
+        raise """
+
+          service resolver for #{mod} - #{resolver}
+          does not define required functions:
+
+          #{missing_funcs}
+
+        """
+    end
+  end
 end
