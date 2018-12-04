@@ -26,3 +26,15 @@ defmodule AbsintheProto.GoogleTypes do
     field :paths, list_of(:string)
   end
 end
+
+defmodule Google.Protobuf.FieldMask do
+  @moduledoc false
+  use Protobuf, syntax: :proto3
+
+  @type t :: %__MODULE__{
+          paths: [String.t()]
+        }
+  defstruct [:paths]
+
+  field :paths, 1, type: :string, repeated: true
+end
