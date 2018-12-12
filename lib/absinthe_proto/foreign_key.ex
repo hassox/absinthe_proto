@@ -9,13 +9,15 @@ defmodule AbsintheProto.ForeignKey do
   @callback output_field_type(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: atom
   @callback one_resolver(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: (map, map, Absinthe.Resolution.t -> {:ok | :error, any} | :error)
   @callback many_resolver(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: (map, map, Absinthe.Resolution.t -> {:ok, [any]} | :error | {:error, term})
+  @callback attributes(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: [term]
 
   defmacro __using__(_opts \\ []) do
     quote do
       @behaviour AbsintheProto.ForeignKey
 
       def matcher(_, _), do: false
-      defoverridable matcher: 2
+      def attributes(_, _), do: []
+      defoverridable matcher: 2, attributes: 2
     end
   end
 end
