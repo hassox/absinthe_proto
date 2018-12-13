@@ -785,10 +785,12 @@ defmodule AbsintheProto.DSL do
           fk.one_resolver(gql_obj, field)
         end
       attrs = fk.attributes(gql_obj, field) || []
+
       attrs = attrs ++ [
         type: (quote do: unquote(dt)),
         resolve: (quote do: unquote(resolver)),
       ]
+
       {
         ident,
         %AbsintheProto.Objects.GqlObject.GqlField{
