@@ -63,6 +63,5 @@ defmodule AbsintheProtoTest do
         AbsintheProtoTest.Schema
       )
     assert {:ok, %{data: data}} = result
-    IO.inspect(data)
   end
 end
