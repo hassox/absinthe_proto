@@ -224,8 +224,11 @@ defmodule AbsintheProto.DSL do
       %AbsintheProto.Objects.GqlObject{} = obj ->
         new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
         Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
-      _ ->
-        raise "exclude_fields is only applicable to proto messages"
+      %AbsintheProto.Objects.GqlService{} = obj ->
+        new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
+        Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
+      x ->
+        raise "exclude_fields is only applicable to proto messages not #{x}"
     end
   end
 
@@ -476,7 +479,7 @@ defmodule AbsintheProto.DSL do
     # we only want to create this once
     with obj when is_nil(obj) <- Map.get(gql_messages, obj_name) do
       input_objs =
-        for o <- proto_gql_object(:input, mod, ns), into: %{}, do: {o.identifier, o}
+        for o <- proto_gql_object(:input, mod, ns), mod != Google.Protobuf.Struct, into: %{}, do: {o.identifier, o}
 
       gql_messages = Map.merge(gql_messages, input_objs)
       Module.put_attribute(within_mod, :proto_gql_messages, gql_messages)
@@ -537,9 +540,10 @@ defmodule AbsintheProto.DSL do
       ]
       |> Enum.flat_map(&(&1))
 
-    # need to go through and create new input objects for embedded messages
     result =
     Enum.reduce mod.__message_props__.field_props, out, fn
+      {_, %{type: Google.Protobuf.Struct}}, acc ->
+        acc
       {_, %{embedded?: true, type: type}}, acc ->
         if within_namespace?(type, ns) do
           :input
@@ -577,6 +581,7 @@ defmodule AbsintheProto.DSL do
           for {_, props} <- input.__message_props__.field_props,
               props.embedded?,
               within_namespace?(props.type, ns),
+              props.type != Google.Protobuf.Struct,
               into: [],
               do: proto_gql_object(:input, props.type, ns)
         objs ++ field_objs
@@ -597,6 +602,7 @@ defmodule AbsintheProto.DSL do
       args =
         for {_, props} <- input.__message_props__.field_props,
             props.oneof == nil,
+            props.type != Google.Protobuf.Struct,
             into: %{}
          do
           datatype =
@@ -614,9 +620,14 @@ defmodule AbsintheProto.DSL do
       args =
         Enum.reduce input.__message_props__.oneof || [], args, fn
           {field_name, _id}, acc ->
-            output_type = gql_object_name(input, [:oneof, field_name, :input_object])
-            arg = [name: field_name, type: quote do: unquote(output_type)]
-            Map.put(acc, field_name, arg)
+            case input do
+              Google.Protobuf.Struct ->
+                acc
+              input ->
+                output_type = gql_object_name(input, [:oneof, field_name, :input_object])
+                arg = [name: field_name, type: quote do: unquote(output_type)]
+                Map.put(acc, field_name, arg)
+            end
           _, acc -> acc
         end
 
@@ -715,7 +726,7 @@ defmodule AbsintheProto.DSL do
   end
 
   defp proto_fields(field_props, existing, name_opts) do
-    for props <- field_props, into: existing do
+    for props <- field_props, props.type != Google.Protobuf.Struct, into: existing do
       f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom, orig?: true, list?: props.repeated?}
       attrs =
         []
@@ -836,6 +847,16 @@ defmodule AbsintheProto.DSL do
           Map.put(acc, obj_name, oneof_obj)
       end
     end
+  end
+
+  defp remove_fields(msgs, %AbsintheProto.Objects.GqlService{} = srv, mod, fields) do
+    new_fields =
+      for {identifier, f} <- srv.fields,
+          identifier not in fields,
+          into: %{},
+          do: {identifier, f}
+
+    Map.put(msgs, gql_object_name(mod), %{srv | fields: new_fields})
   end
 
   defp proto_type(m) do

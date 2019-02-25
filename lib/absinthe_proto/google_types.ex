@@ -15,6 +15,7 @@ defmodule AbsintheProto.GoogleTypes do
       Google.Protobuf.UInt64Value,
       Google.Protobuf.StringValue,
       Google.Protobuf.Timestamp,
+      Google.Protobuf.Duration,
     ]
   end
 
