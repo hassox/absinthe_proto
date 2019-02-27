@@ -1,5 +1,5 @@
 defmodule AbsintheProtoTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: false
   doctest AbsintheProto
 
   test "greets the world" do

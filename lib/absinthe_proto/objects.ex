@@ -7,6 +7,60 @@ end
 defmodule AbsintheProto.Objects do
   require AbsintheProto.ObjectFields
 
+  defmodule Build do
+    defstruct [
+      :id_alias,
+      :namespace, # done
+      foreign_keys: [],
+      ignored_objects: MapSet.new(),
+      input_objects: MapSet.new(),
+      messages: %{}, # done
+    ]
+  end
+
+  defmodule Message do
+    defstruct [
+      :gql_name,
+      :module,
+      :proto_type,
+      :service_resolver,
+      excluded_fields: MapSet.new(),
+      updated_rpcs: %{},
+      rpc_queries: MapSet.new(),
+      additional_fields: %{},
+      resolved_fields: %{},
+    ]
+  end
+
+  defmodule Blueprint do
+    defmodule Enum do
+      defstruct [
+        message: nil,
+        identifier: nil,
+        values: []
+      ]
+    end
+
+    defmodule Message do
+      defstruct [
+        message: nil,
+        raw_field_map: %{},
+        additional_field_map: %{},
+        oneof_field_map: %{},
+      ]
+    end
+
+    defmodule MessageField do
+      defstruct [
+        :identifier,
+        :proto_datatype,
+        :proto_field_props,
+        list?: false,
+        attrs: nil,
+      ]
+    end
+  end
+  
   defmodule GqlInputObject do
     defstruct AbsintheProto.ObjectFields.object_fields()
   end
