@@ -17,10 +17,6 @@ defmodule AbsintheProtoTest.Types do
     modify AbsintheProto.Test.User do
       exclude_fields [:field_to_remove]
 
-      update_field :extra_field,
-                   description: "Here is my extra field",
-                   resolve: {AbsintheProtoTest.Resolver, :resolve_extra}
-
       add_field :another_field, non_null(:string), resolve: {AbsintheProtoTest.Resolver, :resolve_another_field}
     end
 

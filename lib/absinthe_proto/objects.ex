@@ -43,6 +43,7 @@ defmodule AbsintheProto.Objects do
 
     defmodule Message do
       defstruct [
+        identifier: nil,
         message: nil,
         raw_field_map: %{},
         additional_field_map: %{},
@@ -59,8 +60,27 @@ defmodule AbsintheProto.Objects do
         attrs: nil,
       ]
     end
+
+    defmodule Service do
+      defstruct [
+        :identifier,
+        :resolver,
+        :proto_module,
+        :message,
+        queries: MapSet.new(),
+      ]
+
+      defmodule RPCCall do
+        defstruct [
+          :identifier,
+          :output_object,
+          args: [],
+          input_objects: MapSet.new(),
+        ]
+      end
+    end
   end
-  
+
   defmodule GqlInputObject do
     defstruct AbsintheProto.ObjectFields.object_fields()
   end

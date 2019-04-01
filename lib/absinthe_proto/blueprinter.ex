@@ -1,4 +1,4 @@
-defmodule AbsintheProto.Writer do
+defmodule AbsintheProto.Blueprinter do
   @moduledoc false
     # 2. Ignore objects (remove them from consideration)
     # 4. Apply exlude fields from base objects
@@ -29,18 +29,18 @@ defmodule AbsintheProto.Writer do
     |> ignore_objects()
     # |> apply_id_alias()
     # |> apply_foreign_keys()
-    |> generate_blueprints()
+    |> generate_blueprint_objects()
     # |> generate_objects()
     # |> compile_services()
     # |> compile_input_objects()
-    |> quote_compiled()
+    # |> quote_compiled()
   end
 
   defp ignore_objects({%{messages: messages, ignored_objects: ignored} = build, comp}) do
     {%{build | messages: Map.drop(messages, MapSet.to_list(ignored))}, comp}
   end
 
-  defp generate_blueprints_objects({%{messages: messages} = b, c} = o) do
+  defp generate_blueprint_objects({%{messages: messages} = b, c} = o) do
     blueprints =
       messages
       |> Enum.map(&message_to_blueprint/1)
@@ -76,27 +76,28 @@ defmodule AbsintheProto.Writer do
     # excluded fields is a mapset of fields to exclude
     values =
       mod.__message_props__.field_props
-      |> Enum.filter(&(not MapSet.member?(exclude, &1.name_atom))
-      |> Enum.map(fn {_, p} -> p.name_atom})
+      |> Map.values()
+      |> Enum.filter(&(not MapSet.member?(exclude, &1.name_atom)))
+      |> Enum.map(&(&1.name_atom))
 
     {
       mod,
       %AbsintheProto.Objects.Blueprint.Enum{
-        message: msg,
         identifier: msg.gql_name,
+        message: msg,
         values: values,
       }
     }
   end
 
-  defp message_to_blueprint({mod, %{proto_type: :message, excluded_fields: exclude} = msg}) do
+  defp message_to_blueprint({mod, %{proto_type: :message, excluded_fields: excluded} = msg}) do
     raw_field_props = Map.values(mod.__message_props__.field_props)
 
     raw_field_map = # %{foo: %{identifier: foo, list?: true|false, proto_datatype: ...}}
       raw_field_props
-      |> Enum.filter(&(not MapSet.member?(exclude, &1.name_atom)))
-      |> Enum.filter(&(&1.oneof != nil))
-      |> Enum.map(&message_field/1)
+      |> Stream.filter(&(not MapSet.member?(excluded, &1.name_atom)))
+      |> Stream.filter(&(&1.oneof != nil))
+      |> Stream.map(&message_field/1)
       |> Enum.into(%{})
 
     additional_field_map =
@@ -104,7 +105,7 @@ defmodule AbsintheProto.Writer do
       |> Enum.map(fn {name, attrs} ->
         {
           name,
-          %AbsintheProto.Object.MessageField{
+          %AbsintheProto.Objects.Blueprint.MessageField{
              identifier: name,
              attrs: attrs,
           }
@@ -120,8 +121,8 @@ defmodule AbsintheProto.Writer do
           for {name, id} <- oneofs, into: %{} do
             oneof_fields =
               raw_field_props
-              |> Enum.filter(&(&1.oneof == id))
-              |> Enum.map(&message_field/1)
+              |> Stream.filter(&(&1.oneof == id))
+              |> Stream.map(&message_field/1)
               |> Enum.into(%{})
 
             {name, oneof_fields}
@@ -131,6 +132,7 @@ defmodule AbsintheProto.Writer do
     {
       mod,
       %AbsintheProto.Objects.Blueprint.Message{
+        identifier: msg.gql_name,
         message: msg,
         raw_field_map: raw_field_map,
         additional_field_map: additional_field_map,
@@ -139,32 +141,60 @@ defmodule AbsintheProto.Writer do
     }
   end
 
-  defp message_to_blueprint({mod, %{proto_type: :service, excluded_fields: exclude} = msg}) do
-    raw_rpc_calls =
-      mod.__rpc_calls__
-      |> munge_service_rpc_names()
-      |> Enum.filter(fn {k, _v} -> not MapSet.member?(exclude, k) end)
+  defp message_to_blueprint({mod, %{proto_type: :service, excluded_fields: excluded} = msg}) do
+    service =
+      %AbsintheProto.Objects.Blueprint.Service{
+        identifier: msg.gql_name,
+        proto_module: mod,
+        resolver: msg.service_resolver,
+      }
 
-    msg.updated_rpcs # skip_args or required_args
+    fields = 
+      mod.__rpc_calls__()
+      |> Stream.map(fn {raw_name, input, output} ->
+        name = raw_name |> to_string() |> Macro.underscore() |> String.to_atom()
+        {name, input, output}
+      end)
+      |> Stream.filter(fn {name, _, _} -> not MapSet.member?(excluded, name) end)
+      |> Enum.map(fn {name, input, output} ->
+        rpc = 
+          %AbsintheProto.Objects.Blueprint.Service.RPCCall{
+            identifier: name,
+            output_object: output,
+          }
 
-    rpc_calls =
-      raw_rpc_calls
-      |> Enum.flat_map(fn {_name, {input_mod, _}, _} ->
-        input_mod.__message_props__.field_props
-        |> Enum.map(fn
-          {name, %{embedded?: true, type: type} = field} ->
-
-          {name, %{enum?: true, enum_type: type} = field} ->
-        end)
+        rpc =
+          Enum.reduce(input.__message_props__.field_props, rpc, fn 
+            {_, p}, rpc_call ->
+          end)
       end)
 
+    # excluded fields
+    # updated_rpcs
+    # object :od__protos__bobs__services__bobs__service__queries do
+    #   # excluded via exclude_fields field :secret_bob_action, ....
+    #   field :create_thing do
+    #     arg :bob, :od_protos__objects__bob
+    #     # excluded (via skip args) arg :bob, :od_protos__objects__bob
+    #     arg :bob, non_null(:od_protos__objects__bob) # via required args
 
-    {
-      message: msg,
-      raw_rpc_calls: raw_rpc_calls,
-      queries: msg.rpc_queries,
+    #     arg :id, :string
+    #     arg :count, :int64
+    #     resolve {BobsServiceResolver, :method_name}
+    #   end 
+    # end
 
-    }
+    # modify OdProtos.Bobs.Services.Bobs.Service do
+    #   serviceResolver BobsServiceResolver 
+    #   exclude_fields [:secret_bob_action]
+    #   rpc_queries [:create_thing]
+
+    #   update_rpc :create_thing, skip_args: [:bob]
+    #   # OR 
+    #   update_rpc :create_thing, require_args: [:bob]
+    # end
+
+    {mod, service}
   end
 
   defp message_field(%{enum?: true, enum_type: type} = f) do
@@ -189,17 +219,5 @@ defmodule AbsintheProto.Writer do
         proto_datatype: type,
       }
     }
-  end
-
-  defp munge_service_rpc_names(rpc_calls) do
-    Enum.reduce rpc_calls, %{}, fn {raw_name, input, output}, acc ->
-      rpc_name = raw_name |> to_string() |> Macro.underscore()
-      Map.put(acc, rpc_name, {input, output})
-    end
-  end
-
-  defp service_args_to_rpc({name, {input_type, _in_stream}, {output_type, _out_stream}}) do
-
-    {name, output_datatype, args, input_objects}
   end
 end
