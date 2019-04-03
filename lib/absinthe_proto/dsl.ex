@@ -37,7 +37,6 @@ defmodule AbsintheProto.DSL do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     Module.put_attribute(__CALLER__.module, :id_alias, nil)
 
-    IO.puts("#{ns} BUILDINGNS")
 
     case Keyword.get(opts, :id_alias) do
       nil -> :nothing
@@ -88,7 +87,6 @@ defmodule AbsintheProto.DSL do
 
     Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
 
-    result =
     for {_, obj} <- msgs do
       case obj do
         %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
@@ -184,8 +182,6 @@ defmodule AbsintheProto.DSL do
           end
       end
     end
-    IO.puts("#{ns} BUILDINGNS FINISHED")
-    result
   end
 
   defmacro ignore_objects(proto_mods) do
