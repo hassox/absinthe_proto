@@ -36,6 +36,9 @@ defmodule AbsintheProto.DSL do
     ns = Macro.expand(proto_namespace, __CALLER__)
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     Module.put_attribute(__CALLER__.module, :id_alias, nil)
+
+    IO.puts("#{ns} BUILDINGNS")
+
     case Keyword.get(opts, :id_alias) do
       nil -> :nothing
       id_alias -> Module.put_attribute(__CALLER__.module, :id_alias, id_alias)
@@ -85,6 +88,7 @@ defmodule AbsintheProto.DSL do
 
     Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
 
+    result =
     for {_, obj} <- msgs do
       case obj do
         %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
@@ -180,6 +184,8 @@ defmodule AbsintheProto.DSL do
           end
       end
     end
+    IO.puts("#{ns} BUILDINGNS FINISHED")
+    result
   end
 
   defmacro ignore_objects(proto_mods) do
@@ -653,6 +659,7 @@ defmodule AbsintheProto.DSL do
             msg_props.field_props
             |> Enum.map(fn {_, p} -> p end)
             |> Enum.filter(&(&1.oneof == id))
+            |> Enum.filter(fn p -> p.type != Google.Protobuf.Struct end)
 
           struct(
             as_mod,
