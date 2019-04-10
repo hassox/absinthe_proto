@@ -23,6 +23,9 @@ defmodule AbsintheProto.Scalars do
     Keyword.get(@type_map, type, :error)
   end
 
+  def scalar?(type), 
+    do: proto_to_gql_scalar(type) != :error
+
   @desc "Base64 encoded string (URL encoded)"
   scalar :bytes do
     parse fn

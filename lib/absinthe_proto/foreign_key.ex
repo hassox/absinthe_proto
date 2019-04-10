@@ -2,14 +2,15 @@ defmodule AbsintheProto.ForeignKey do
   @moduledoc """
   Defines a foreign key to dynamically add foreign keys to objects
   """
-  alias AbsintheProto.Objects
+  @type message :: %{identifier: atom, proto_module: module}
+  @type field :: %{identifier: atom, list?: boolean, field_props: map}
 
-  @callback matcher(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: boolean
-  @callback output_field_name(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: atom
-  @callback output_field_type(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: atom
-  @callback one_resolver(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: (map, map, Absinthe.Resolution.t -> {:ok | :error, any} | :error)
-  @callback many_resolver(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: (map, map, Absinthe.Resolution.t -> {:ok, [any]} | :error | {:error, term})
-  @callback attributes(Objects.GqlObject.t, Objects.GqlObject.GqlField.t) :: [term]
+  @callback matcher(message, field) :: boolean
+  @callback output_field_name(message, field) :: atom
+  @callback output_field_type(message, field) :: atom
+  @callback one_resolver(message, field) :: (map, map, Absinthe.Resolution.t -> {:ok | :error, any} | :error)
+  @callback many_resolver(message, field) :: (map, map, Absinthe.Resolution.t -> {:ok, [any]} | :error | {:error, term})
+  @callback attributes(message, field) :: [term]
 
   defmacro __using__(_opts \\ []) do
     quote do

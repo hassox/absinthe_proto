@@ -4,10 +4,11 @@ defmodule AbsintheProtoTest.Types do
   alias AbsintheProto.Objects.ForeignKey
 
   # build all proto messages found within a namespace
-  build AbsintheProto.Test,
-        paths: Path.wildcard("#{__DIR__}/../../protos/**/*.pb.ex"),
-        id_alias: :token,
-        foreign_keys: [user: AbsintheProtoTest.ForeignKeys.User]
+  build paths: Path.wildcard("#{__DIR__}/../../protos/**/*.pb.ex"),
+        id_alias: ~r/^token$/,
+        foreign_keys: [user: AbsintheProtoTest.ForeignKeys.User],
+        namespace: AbsintheProto.Test
+
   do
 
     # create input objects when other apis need to use them
@@ -26,12 +27,11 @@ defmodule AbsintheProtoTest.Types do
 
     modify AbsintheProto.Test.Service.Service do
       rpc_queries [:get_basic, :get_oneof]
-      service_resolver AbsintheProtoTest.Resolver
 
       # update_rpc :get_basic, []
       update_rpc :get_oneof, resolve: {AbsintheProtoTest.Resolver, :resolve_get_oneof}
     end
   end
 
-  build Google.Protobuf, otp_app: :protobuf
+  build namespace: Google.Protobuf, otp_app: :protobuf
 end
