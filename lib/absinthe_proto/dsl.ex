@@ -188,7 +188,9 @@ defmodule AbsintheProto.DSL do
 
     Module.eval_quoted(__CALLER__, blk)
 
-    compile_protos_to_gql!(__CALLER__.module)
+    build_struct = current_draft_build!(__CALLER__.module)
+
+    nil
   end
 
   @doc """
@@ -308,7 +310,7 @@ defmodule AbsintheProto.DSL do
       build_struct.updated_rpcs
       |> Map.get(proto_mod, %{})
       |> Map.put(field_name, %{field_name: field_name, attrs: attrs})
-    
+
     updated_rpcs = Map.put(build_struct.updated_rpcs, proto_mod, mod_updated_rpcs)
 
     build_struct = %{build_struct | updated_rpcs: updated_rpcs}
@@ -438,20 +440,25 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
-  defp compile_protos_to_gql!(caller) do
-    build_struct = current_draft_build!(caller)
+  defmacro compile_protos_to_gql!(args \\ []) do
+    caller = __CALLER__.module
+    try do
+      build_struct = current_draft_build!(caller)
 
-    {_build_struct, output, _} = 
-      {build_struct, [], caller}
-      |> apply_id_alias!()
-      |> apply_foreign_keys!()
-      |> compile_service_protos!()
-      |> compile_input_protos!()
-      |> compile_messages!()
-      |> compile_enums!()
-      |> compile_clients_and_resolvers!()
+      {_build_struct, output, _} = 
+        {build_struct, [], caller}
+        |> apply_id_alias!()
+        |> apply_foreign_keys!()
+        |> compile_service_protos!()
+        |> compile_input_protos!()
+        |> compile_messages!()
+        |> compile_enums!()
+        |> compile_clients_and_resolvers!()
 
-    output
+      output
+    rescue
+      _ -> []
+    end
   end
 
   defp apply_id_alias!({build_struct, out, caller}) do
@@ -608,7 +615,6 @@ defmodule AbsintheProto.DSL do
   defp compile_service(service, %{build_struct: build_struct, output: output} = acc) do
     excluded_fields = Map.get(build_struct.excluded_fields, service, MapSet.new())
     rpc_queries = Map.get(build_struct.rpc_queries, service, MapSet.new())
-    updated_rpcs = Map.get(build_struct.updated_rpcs, service, %{})
     resolver = Map.get(build_struct.service_resolvers, service,Module.concat(service, :Resolver))
 
     {build_struct, calls} =
@@ -617,6 +623,7 @@ defmodule AbsintheProto.DSL do
         {raw_name, {rpc_input, _streamin}, {rpc_out, _streamout}}, {bs, c}->
           new_input_objects = gather_all_input_objects_from_mod(rpc_input, build_struct.input_objects)
           bs = %{bs | input_objects: MapSet.union(bs.input_objects, MapSet.new(new_input_objects))}
+          updated_rpcs = Map.get(bs.updated_rpcs, service, %{})
 
           field_name = rpc_name_to_gql_name(raw_name)
           query_type = 
@@ -640,7 +647,6 @@ defmodule AbsintheProto.DSL do
                           do
 
               datatype = field_datatype(f.type, required: Enum.member?(required_args, f.name_atom), name_parts: [:input_object], repeated?: f.repeated?)
-
               arg_name = f.name_atom
 
               quote do 
