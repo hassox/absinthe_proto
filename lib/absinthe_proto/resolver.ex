@@ -47,6 +47,11 @@ defmodule AbsintheProto.Resolver do
   """
   @spec fetch_resolver_builder() :: module
   def fetch_resolver_builder() do
-    Application.get_env(:absinthe_proto, :resolver_builder, __MODULE__)
+    case Application.get_env(:absinthe_proto, :resolver_builder, __MODULE__) do
+      nil -> __MODULE__
+      cb ->
+        Code.ensure_compiled(cb)
+        cb
+    end
   end
 end

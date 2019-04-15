@@ -24,7 +24,9 @@ defmodule AbsintheProto.Client do
   def fetch_client_builder() do
     case Application.get_env(:absinthe_proto, :client_builder) do
       nil -> raise "no client buidler specified"
-      cb -> cb
+      cb -> 
+        Code.ensure_compiled(cb)
+        cb
     end
   end
 end
