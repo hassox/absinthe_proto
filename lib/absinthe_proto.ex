@@ -1,11 +1,13 @@
 defmodule AbsintheProto do
+  @moduledoc """
+  Provides macros for reading protobuf messages and providing them as absinthe graphql messages.
+  """
+
+  @doc """
+  Imports the relevant macros from `AbsintheProto.DSL`
+  """
   defmacro __using__(_opts \\ []) do
     quote location: :keep do
-      # @before_compile AbsintheProto.Blueprinter
-      # @before_compile AbsintheProto.Writer
-
-      Module.register_attribute(__MODULE__, :ap_builds, accumulate: true)
-
       require AbsintheProto.DSL
       require Absinthe.Schema.Notation
       use Absinthe.Schema.Notation

@@ -32,7 +32,7 @@ defmodule AbsintheProto.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:protobuf, github: "hassox/protobuf-elixir", override: true, branch: "enum-in-oneof"},
+      {:protobuf, github: "tony612/protobuf-elixir", override: true, ref: "fd42cfdfa8eea19659fd89840a7010b635afaca0"},
       # {:protobuf, ">= 0.0.0"},
       {:grpc, ">= 0.0.0"},
       {:google_protos, "~> 0.1"},

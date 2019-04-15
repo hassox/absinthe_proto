@@ -1,13 +1,144 @@
 defmodule AbsintheProto.DSL do
+  @moduledoc """
+  Provides a DSL for building absinthe graphql messages
 
+  Generates:
+
+  * All input objects for services found
+  * All clients (requires a `AbsintheProto.Client` client builder in config)
+  * All resolvers for found services (overwriteabe with an `AbsintheProto.Resolver builder)
+  * All rpc calls are setup as mutations by default 
+  * All scalar fields in `object`s are marked as required as per Proto3 behaviour
+  * All scalar fields in `input_object`s are not marked as required unless specified
+  * Applies specified foreign keys to all objects within the given namespace (optional) `AbsintheProto.ForeignKey`
+
+  For all services, two objects are generated. One for all service queries and one for all mutations.
+  Queries must be specified as mutations are the default.
+
+  ### Naming convention
+
+  All objects are created utilizing the generated module name of the 
+  proto message using double `_` between package names and snake case between.
+  
+  e.g. `MyApp.Protos.FredFlintstone ==> :my_app__protos__fred_flintstone`
+
+  * Input objects are suffixed with `__input_object`
+  * Queries for a service are suffixed with `__queries`
+  * Mutations are suffixed with `__mutations`
+
+  ### Services
+
+  All services generate both clients and resolvers as well as query and mutation objects.
+
+  * Query objects are the service name suffixed with `__queries` e.g. `:my_app__protos__my_service__service__queries`
+  * Mutation objects are the service name suffixed with `__mutations` e.g. `:my_app__protos__my_service__service__mutations`
+  * Generate a client using the configured `AbsintheProto.Client` builder. Put at `MyProtos.Protos.MyService.Service.Client`
+  * Generate a resolver using the configured `AbsintheProto.Resolver` builder. Put at `MyProtos.Protos.MyService.Service.Resolver`
+
+  ### Foreign keys
+
+  Foregin keys if specified will be mapped automatically for every object.
+
+  To setup a foreign key 
+  
+  * Implement the `AbsintheProto.ForeignKey` behaviour. 
+  * Specify the foreign key in the `build` macro. Optionally specify namespaces to apply the foreign key
+
+  ### Configuration
+
+  A Client builder must be provided, and a resolver builder _may_ be provided.
+
+      config :absinthe_proto,
+        resolver_builder: MyResolverBuilder,
+        client_builder: MyClientBuilder,
+  
+
+  ### Troubleshooting
+
+  This library heavliy relies on macros to provide the translation between protos and graphql objects
+  As such, normal compile loading is affected and updates to proto files may not be picked up.
+
+  In order to sort this you _must_ force compile the code that makes use of this library when you update protos.
+
+  ## Example
+
+  ```elixir
+  defmodule MyApp.Types do
+    use AbsintheProto
+
+    build path_glob: "path/to/protos/**/*.pb.ex", # the source of the compiled proto files
+          namespace: MyProtos, # the namespace to compile
+          foreign_keys: [
+            [foreign_key: MyApp.ForeignKeys.Users],
+            [
+              foreign_key: MyApp.ForeignKeys.Addresses,
+              namespaces: [
+                MyProtos.Under.Here,
+                MyProtos.Under.There,
+              ]
+            ],
+          ]
+    do
+
+      # declare input_objects that are not part of an RPC call within this namespace
+      input_objects([
+        MyProtos.Some.Input
+      ])
+
+      # ignore the provided objects and do not generate gql types 
+      ignore_objects([
+        MyProtos.Some.PrivateObject
+      ])
+
+      bulk_rpc_queries(%{
+        MyProtos.MyService => 
+
+      })
+
+      modify MyProtos.SomeMessage do
+        # add a new field
+        add_field :name, :type, resolve: {mod, :fun_name}
+
+        # exclude the following fields from this message
+        exclude_fields([:private_field])
+      end
+
+      modify MyProtos.SomeService.Service do
+        # set the rpc queries
+        rpc_queries([:my_queries, :yo])
+
+        # manually specify the resolver
+        service_resolver MyResolver
+
+        update_rpc :rpc_call_name, required_args: [:field, :names, :from, :input, :object],
+                                   skip_args: [:field_names_from_input_object]
+
+
+    end
+  end
+  ```
+  """
+
+  @typedoc "a glob for compiled proto files. e.g. `my/proto/path/**/*.pb.ex`"
   @type path_glob :: String.t
+
+  @typedoc "an otp application that has compiled protos"
   @type otp_app :: :atom
 
+  @typedoc """
+  A foreign key specification. 
+  The foreign key must implement the `AbsintheProto.ForeignKey` behaviour.
+  The namespaces specify that all objects found within that namespace will have the foreign key applied
+  """
   @type foreign_key :: [
     namespaces: [module],
     foreign_key: module,
   ]
 
+  @typedoc """
+  If a namepace is specified, only objects under that namespace will be compiled to gql
+  `id_aliases` will implement a resolver to provide an ID field
+  """
   @type options :: [
     namespace: module,
     foreign_keys: [foreign_key],
@@ -31,6 +162,9 @@ defmodule AbsintheProto.DSL do
 
   import AbsintheProto.Utils
 
+  @doc """
+  Build a collection of proto modules into gql objects, input objects, resolvers and clients.
+  """
   defmacro build(options, blk \\ [do: []]) do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     ns = Keyword.get(opts, :namespace)
@@ -57,6 +191,9 @@ defmodule AbsintheProto.DSL do
     compile_protos_to_gql!(__CALLER__.module)
   end
 
+  @doc """
+  Used within a build call. Provide a list of proto objects to ignore
+  """
   defmacro ignore_objects(objs) do
     {objs, _} = Module.eval_quoted(__CALLER__, objs)
 
@@ -73,6 +210,17 @@ defmodule AbsintheProto.DSL do
     nil 
   end
 
+  @doc """
+  Used within a build call.
+  
+  Manually specify input_objects to force creating input objects.
+
+  Normally all objects that are part of rpc calls are automatically created as input objects
+  but there are some times where you need to specify them in this way.
+
+  1. When they are used outside the protos found in the `build` call
+  2. Can be used in a more manual way (to support `Any` fields)
+  """
   defmacro input_objects(objs) do
     {objs, _} = Module.eval_quoted(__CALLER__, objs)
 
@@ -89,6 +237,15 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Modify a specific proto message.
+
+  This could be a 
+
+  * message
+  * enum
+  * service
+  """
   defmacro modify(mod, blk) do
     {mod, _} = Module.eval_quoted(__CALLER__, mod)
     save_current_proto_message(mod, __CALLER__.module)
@@ -97,6 +254,11 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Exclude fields from a proto message.
+
+  This will not be available to use (either as input objects or normal objects)
+  """
   defmacro exclude_fields(fields) do
     {fields, _} = Module.eval_quoted(__CALLER__, fields)
     proto_mod = current_proto_message!(__CALLER__.module)
@@ -116,6 +278,21 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Update a specific field that maps to an rpc call.
+
+  Only used within a call to modify a service
+
+  Example
+
+  ```
+    modify MyProtos.Services.Flowers.Service do
+      update_rpc :rpc_method, required_args: [...], skip_args: [...], description: "some docs"
+    end
+  ```
+
+  Update rpc is used to require or skip arguments or to add documentation.
+  """
   defmacro update_rpc(field_name, attrs) do
     {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
     {attrs, _} = Module.eval_quoted(__CALLER__, attrs)
@@ -140,6 +317,12 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Used within a modify call of a SERVICE.
+
+  Normally not needed, you can override the service resolver
+  to a custom one if required.
+  """
   defmacro service_resolver(resolver) do
     {resolver, _} = Module.eval_quoted(__CALLER__, resolver)
 
@@ -156,6 +339,25 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Used within a `modify` call of a SERVICE.
+
+  By default all rpc methods are `mutation`s.
+  Specify the methods/fields that should be considered queries.
+
+  All queries will be created in gql as the service suffixed with `__queries`
+  All mutations will be created in gql as the service suffixed with `__mutations`
+
+  Example
+
+  ```
+  # MyProtos.Services.Flowers.Service gives
+  :my_protos__services__flowers__service__queries
+  :my_protos__services__flowers__service__mutations
+  ```
+
+  Each is only generated when there are fields found.
+  """
   defmacro rpc_queries(queries) do
     {queries, _} = Module.eval_quoted(__CALLER__, queries)
     proto_mod = current_proto_message!(__CALLER__.module)
@@ -176,6 +378,16 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Setting queries can be done in bulk by providing a map of service to list of query fields.
+
+  Used within the `build` call
+
+  ```
+  build_rpc_queries(%{
+    MyProtos.Services.Flowers.Service => [:get, :search]
+  })
+  """
   defmacro bulk_rpc_queries(queries) do
     {queries, _} = Module.eval_quoted(__CALLER__, queries)
     build_struct = current_draft_build!(__CALLER__.module)
@@ -192,6 +404,15 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  @doc """
+  Used within `modify` call
+
+  Add a field to a proto message when it becomes gql.
+
+  Added fields provide the ability to manually setup associations and other fields that are not part of the proto message.
+
+  Added fields are NOT applied to `input_object`s
+  """
   defmacro add_field(field_name, datatype, attrs \\ []) do
     {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
     proto_mod = current_proto_message!(__CALLER__.module)
@@ -224,7 +445,6 @@ defmodule AbsintheProto.DSL do
       {build_struct, [], caller}
       |> apply_id_alias!()
       |> apply_foreign_keys!()
-      # |> debug_build_struct!(&(IO.inspect(&1.added_fields, limit: :infinity)))
       |> compile_service_protos!()
       |> compile_input_protos!()
       |> compile_messages!()
@@ -232,11 +452,6 @@ defmodule AbsintheProto.DSL do
       |> compile_clients_and_resolvers!()
 
     output
-  end
-
-  def debug_build_struct!({build_struct, _, _} = done, fun) do
-    fun.(build_struct)
-    done
   end
 
   defp apply_id_alias!({build_struct, out, caller}) do
