@@ -3,9 +3,9 @@ defmodule AbsintheProto.Test.Basic do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    name:       String.t,
-    enum_value: integer
-  }
+          name: String.t(),
+          enum_value: atom | integer
+        }
   defstruct [:name, :enum_value]
 
   field :name, 1, type: :string
@@ -25,11 +25,11 @@ defmodule AbsintheProto.Test.User do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    token:           String.t,
-    name:            String.t,
-    extra_field:     integer,
-    field_to_remove: non_neg_integer
-  }
+          token: String.t(),
+          name: String.t(),
+          extra_field: integer,
+          field_to_remove: non_neg_integer
+        }
   defstruct [:token, :name, :extra_field, :field_to_remove]
 
   field :token, 1, type: :string
@@ -43,9 +43,9 @@ defmodule AbsintheProto.Test.Oneof do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    union_enum:      {atom, any},
-    id:              String.t
-  }
+          union_enum: {atom, any},
+          id: String.t()
+        }
   defstruct [:union_enum, :id]
 
   oneof :union_enum, 0
@@ -62,8 +62,8 @@ defmodule AbsintheProto.Test.WithAny do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    anything: Google.Protobuf.Any.t
-  }
+          anything: Google.Protobuf.Any.t() | nil
+        }
   defstruct [:anything]
 
   field :anything, 1, type: Google.Protobuf.Any
@@ -74,8 +74,8 @@ defmodule AbsintheProto.Test.RepeatedNested do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    basics: [AbsintheProto.Test.Basic.t]
-  }
+          basics: [AbsintheProto.Test.Basic.t()]
+        }
   defstruct [:basics]
 
   field :basics, 1, repeated: true, type: AbsintheProto.Test.Basic
@@ -86,9 +86,9 @@ defmodule AbsintheProto.Test.WithForeignKey do
   use Protobuf, syntax: :proto3
 
   @type t :: %__MODULE__{
-    id:         String.t,
-    user_token: String.t
-  }
+          id: String.t(),
+          user_token: String.t()
+        }
   defstruct [:id, :user_token]
 
   field :id, 1, type: :string
@@ -107,4 +107,3 @@ defmodule AbsintheProto.Test.Service.Stub do
   @moduledoc false
   use GRPC.Stub, service: AbsintheProto.Test.Service.Service
 end
-

@@ -1,865 +1,983 @@
 defmodule AbsintheProto.DSL do
   @moduledoc """
-  Provides a DSL for importing Proto messages and converting to GraphQL types.
+  Provides a DSL for building absinthe graphql messages
+
+  Generates:
+
+  * All input objects for services found
+  * All clients (requires a `AbsintheProto.Client` client builder in config)
+  * All resolvers for found services (overwriteabe with an `AbsintheProto.Resolver builder)
+  * All rpc calls are setup as mutations by default 
+  * All scalar fields in `object`s are marked as required as per Proto3 behaviour
+  * All scalar fields in `input_object`s are not marked as required unless specified
+  * Applies specified foreign keys to all objects within the given namespace (optional) `AbsintheProto.ForeignKey`
+
+  For all services, two objects are generated. One for all service queries and one for all mutations.
+  Queries must be specified as mutations are the default.
+
+  ### Naming convention
+
+  All objects are created utilizing the generated module name of the 
+  proto message using double `_` between package names and snake case between.
+  
+  e.g. `MyApp.Protos.FredFlintstone ==> :my_app__protos__fred_flintstone`
+
+  * Input objects are suffixed with `__input_object`
+  * Queries for a service are suffixed with `__queries`
+  * Mutations are suffixed with `__mutations`
+
+  ### Services
+
+  All services generate both clients and resolvers as well as query and mutation objects.
+
+  * Query objects are the service name suffixed with `__queries` e.g. `:my_app__protos__my_service__service__queries`
+  * Mutation objects are the service name suffixed with `__mutations` e.g. `:my_app__protos__my_service__service__mutations`
+  * Generate a client using the configured `AbsintheProto.Client` builder. Put at `MyProtos.Protos.MyService.Service.Client`
+  * Generate a resolver using the configured `AbsintheProto.Resolver` builder. Put at `MyProtos.Protos.MyService.Service.Resolver`
+
+  ### Foreign keys
+
+  Foregin keys if specified will be mapped automatically for every object.
+
+  To setup a foreign key 
+  
+  * Implement the `AbsintheProto.ForeignKey` behaviour. 
+  * Specify the foreign key in the `build` macro. Optionally specify namespaces to apply the foreign key
+
+  ### Configuration
+
+  A Client builder must be provided, and a resolver builder _may_ be provided.
+
+      config :absinthe_proto,
+        resolver_builder: MyResolverBuilder,
+        client_builder: MyClientBuilder,
+  
+
+  ### Troubleshooting
+
+  This library heavliy relies on macros to provide the translation between protos and graphql objects
+  As such, normal compile loading is affected and updates to proto files may not be picked up.
+
+  In order to sort this you _must_ force compile the code that makes use of this library when you update protos.
+
+  ## Example
+
+  ```elixir
+  defmodule MyApp.Types do
+    use AbsintheProto
+
+    build path_glob: "path/to/protos/**/*.pb.ex", # the source of the compiled proto files
+          namespace: MyProtos, # the namespace to compile
+          foreign_keys: [
+            [foreign_key: MyApp.ForeignKeys.Users],
+            [
+              foreign_key: MyApp.ForeignKeys.Addresses,
+              namespaces: [
+                MyProtos.Under.Here,
+                MyProtos.Under.There,
+              ]
+            ],
+          ]
+    do
+
+      # declare input_objects that are not part of an RPC call within this namespace
+      input_objects([
+        MyProtos.Some.Input
+      ])
+
+      # ignore the provided objects and do not generate gql types 
+      ignore_objects([
+        MyProtos.Some.PrivateObject
+      ])
+
+      bulk_rpc_queries(%{
+        MyProtos.MyService => 
+
+      })
+
+      modify MyProtos.SomeMessage do
+        # add a new field
+        add_field :name, :type, resolve: {mod, :fun_name}
+
+        # exclude the following fields from this message
+        exclude_fields([:private_field])
+      end
+
+      modify MyProtos.SomeService.Service do
+        # set the rpc queries
+        rpc_queries([:my_queries, :yo])
+
+        # manually specify the resolver
+        service_resolver MyResolver
+
+        update_rpc :rpc_call_name, required_args: [:field, :names, :from, :input, :object],
+                                   skip_args: [:field_names_from_input_object]
+
+
+    end
+  end
+  ```
   """
-  require AbsintheProto.Objects.GqlObject
-  require AbsintheProto.Objects.GqlObject.GqlField
-  require AbsintheProto.Objects.GqlEnum
-  require AbsintheProto.Objects.GqlEnum.GqlValue
 
-  @type build_opts :: [paths: [String.t]] | [otp_app: atom]
+  @typedoc "a glob for compiled proto files. e.g. `my/proto/path/**/*.pb.ex`"
+  @type path_glob :: String.t
 
-  @custom_field_attrs [:non_null]
+  @typedoc "an otp application that has compiled protos"
+  @type otp_app :: :atom
+
+  @typedoc """
+  A foreign key specification. 
+  The foreign key must implement the `AbsintheProto.ForeignKey` behaviour.
+  The namespaces specify that all objects found within that namespace will have the foreign key applied
+  """
+  @type foreign_key :: [
+    namespaces: [module],
+    foreign_key: module,
+  ]
+
+  @typedoc """
+  If a namepace is specified, only objects under that namespace will be compiled to gql
+  `id_aliases` will implement a resolver to provide an ID field
+  """
+  @type options :: [
+    namespace: module,
+    foreign_keys: [foreign_key],
+    id_aliases: [Regex.t],
+    path_glob: path_glob,
+    otp_app: otp_app,
+  ]
+
+  defstruct [
+    namespace: nil,
+    service_resolvers: %{},
+    options: [],
+    ignored_types: MapSet.new(),
+    input_objects: MapSet.new(),
+    excluded_fields: %{},
+    added_fields: %{},
+    rpc_queries: %{},
+    raw_types: %{},
+    updated_rpcs: %{},
+  ]
+
+  import AbsintheProto.Utils
 
   @doc """
-  Build all protos found within the namespace.
-
-  We need to give the compiler some help to find all the modules available.
-
-  For this we use options to either provide paths to files containing our modules or an otp_app.
-
-  ### `:paths` vs `:otp_app`
-
-  Both are evaluated at compile time so are safe to use inside packages.
-
-  If your compiled protos live in the same otp_application as you're using, you'll need to use
-  the `:paths` option.
-
-      build MyProto.Package, paths: Path.wildcard("#{__DIR__}/relative/path/**/*.pb.ex")
-
-   If you're compiled protos live in a separate otp application, use the `:otp_app` option.
-   This option is more efficient than the `:paths` option
-
-   If you need to modify the fields you can pass build a block.
+  Build a collection of proto modules into gql objects, input objects, resolvers and clients.
   """
-  defmacro build(proto_namespace, options, blk \\ [do: []]) do
-    ns = Macro.expand(proto_namespace, __CALLER__)
+  defmacro build(options, blk \\ [do: []]) do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
-    Module.put_attribute(__CALLER__.module, :id_alias, nil)
+    ns = Keyword.get(opts, :namespace)
 
+    build_struct = %__MODULE__{options: opts, namespace: ns}
 
-    case Keyword.get(opts, :id_alias) do
-      nil -> :nothing
-      id_alias -> Module.put_attribute(__CALLER__.module, :id_alias, id_alias)
-    end
+    save_draft_build(build_struct, __CALLER__.module)
 
-    foreign_keys = Keyword.get(opts, :foreign_keys, [])
+    raw_types =
+      case fetch_modules(Keyword.take(opts, [:path_glob, :otp_app])) do
+        [] -> 
+          raise "no proto messages found for #{} namespace"
 
-    mods =
-      case Keyword.take(opts, [:paths, :otp_app]) do
-        nil -> nil
-        [paths: load_files] when is_list(load_files) ->
-          load_files = Enum.map(load_files, &Path.expand/1)
-          mod_strings =
-          for path <- load_files, into: [] do
-            "cat #{path} | grep defmodule | awk '{print $2}' | sort"
-            |> String.to_charlist()
-            |> :os.cmd()
-            |> to_string()
-            |> String.split("\n")
-            |> Enum.filter(&(&1 != ""))
-          end
-          |> Enum.flat_map(&(&1))
-
-          Enum.map(mod_strings, &(:"Elixir.#{&1}"))
-
-        [otp_app: app] when is_atom(app) ->
-          Application.ensure_all_started(app)
-          {:ok, m} = :application.get_key(app, :modules)
-          m
-        [] ->
-          raise "path or otp_app should be passed to AbsintheProto.DSL.build"
-        _ ->
-          raise "unknown options given to AbsintheProto.DSL.build"
+        mods ->
+          filter_proto_messages(mods, ns)
       end
 
-    Module.put_attribute(__CALLER__.module, :proto_namespace, ns)
+    build_struct = %{build_struct | raw_types: raw_types}
 
-    msgs = AbsintheProto.DSL.messages_from_proto_namespace(ns, mods)
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
+    save_draft_build(build_struct, __CALLER__.module)
 
     Module.eval_quoted(__CALLER__, blk)
 
-    msgs =
-      __CALLER__.module
-      |> apply_id_alias()
-      |> apply_foreign_keys(foreign_keys)
+    build_struct = current_draft_build!(__CALLER__.module)
 
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, msgs)
-
-    for {_, obj} <- msgs do
-      case obj do
-        %AbsintheProto.Objects.GqlObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          field_ast =
-            if Map.size(fields) == 0 do
-              [
-                quote do
-                  field :noop, :boolean
-                end
-              ]
-            else
-              for {id, %{attrs: attrs}} <- fields do
-                quote do
-                  field unquote(id), unquote(attrs)
-                end
-              end
-            end
-
-          quote do
-            object unquote(obj_id), unquote(obj_attrs) do
-              unquote_splicing(field_ast)
-            end
-          end
-
-        %AbsintheProto.Objects.GqlService{identifier: obj_id, attrs: obj_attrs, fields: fields} = srv ->
-          ensure_service_resolver!(srv)
-          query_field_ast =
-            for {id, field} <- fields,
-                field.identifier in srv.queries
-            do
-              attrs = service_attrs(field, srv)
-              quote do
-                field unquote(id), unquote(attrs)
-              end
-            end
-
-          mutation_field_ast =
-            for {id, field} <- fields,
-                field.identifier not in srv.queries
-            do
-              attrs = service_attrs(field, srv)
-              quote do
-                field unquote(id), unquote(attrs)
-              end
-            end
-
-          query_obj_id = :"#{obj_id}__queries"
-          mutation_obj_id = :"#{obj_id}__mutations"
-
-          quote do
-            object unquote(query_obj_id), unquote(obj_attrs) do
-              unquote_splicing(query_field_ast)
-            end
-
-            object unquote(mutation_obj_id), unquote(obj_attrs) do
-              unquote_splicing(mutation_field_ast)
-            end
-          end
-
-        %AbsintheProto.Objects.GqlInputObject{identifier: obj_id, attrs: obj_attrs, fields: fields} ->
-          field_ast = for {id, %{attrs: attrs}} <- fields do
-            quote do
-              field unquote(id), unquote(attrs)
-            end
-          end
-          field_ast =
-            if Enum.empty?(field_ast) do
-              [
-                quote do
-                  field :noop, :boolean
-                end
-              ]
-            else
-              field_ast
-            end
-
-          quote do
-            input_object unquote(obj_id), unquote(obj_attrs) do
-              unquote_splicing(field_ast)
-            end
-          end
-        %AbsintheProto.Objects.GqlEnum{identifier: enum_id, attrs: enum_attrs, values: values} ->
-          value_ast = for %{identifier: ident, attrs: attrs} <- values do
-            quote do
-              value unquote(ident), unquote(attrs)
-            end
-          end
-
-          quote do
-            enum unquote(enum_id), unquote(enum_attrs) do
-              unquote_splicing(value_ast)
-            end
-          end
-      end
-    end
-  end
-
-  defmacro ignore_objects(proto_mods) do
-    {mods, _} = Module.eval_quoted(__CALLER__, proto_mods)
-    mods = List.wrap(mods)
-
-    new_msgs =
-      __CALLER__.module
-      |> Module.get_attribute(:proto_gql_messages)
-      |> Enum.reject(fn {_, %{module: mod}} -> Enum.member?(mods, mod) end)
-      |> Enum.into(%{})
-
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
-  end
-
-  defmacro modify(proto_mod, blk) do
-    mod = Macro.expand(proto_mod, __CALLER__)
-    Module.put_attribute(__CALLER__.module, :modify_proto_mod, mod)
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
-    Module.eval_quoted(__CALLER__, blk)
-  after
-    Module.delete_attribute(__CALLER__.module, :modify_proto_mod)
+    nil
   end
 
   @doc """
-  Excludes fields from a proto message
+  Used within a build call. Provide a list of proto objects to ignore
+  """
+  defmacro ignore_objects(objs) do
+    {objs, _} = Module.eval_quoted(__CALLER__, objs)
+
+    build_struct = current_draft_build!(__CALLER__.module)
+
+    ignored_types =
+      objs
+      |> MapSet.new()
+      |> MapSet.union(build_struct.ignored_types)
+    
+    build_struct = %{build_struct | ignored_types: ignored_types}
+    save_draft_build(build_struct, __CALLER__.module)
+
+    nil 
+  end
+
+  @doc """
+  Used within a build call.
+  
+  Manually specify input_objects to force creating input objects.
+
+  Normally all objects that are part of rpc calls are automatically created as input objects
+  but there are some times where you need to specify them in this way.
+
+  1. When they are used outside the protos found in the `build` call
+  2. Can be used in a more manual way (to support `Any` fields)
+  """
+  defmacro input_objects(objs) do
+    {objs, _} = Module.eval_quoted(__CALLER__, objs)
+
+    build_struct = current_draft_build!(__CALLER__.module)
+
+    input_objects = 
+      objs
+      |> MapSet.new()
+      |> MapSet.union(build_struct.input_objects)
+    
+    build_struct = %{build_struct | input_objects: input_objects}
+    save_draft_build(build_struct, __CALLER__.module)
+
+    nil
+  end
+
+  @doc """
+  Modify a specific proto message.
+
+  This could be a 
+
+  * message
+  * enum
+  * service
+  """
+  defmacro modify(mod, blk) do
+    {mod, _} = Module.eval_quoted(__CALLER__, mod)
+    save_current_proto_message(mod, __CALLER__.module)
+    Module.eval_quoted(__CALLER__, blk)
+    clear_current_proto_message(__CALLER__.module)
+    nil
+  end
+
+  @doc """
+  Exclude fields from a proto message.
+
+  This will not be available to use (either as input objects or normal objects)
   """
   defmacro exclude_fields(fields) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+    {fields, _} = Module.eval_quoted(__CALLER__, fields)
+    proto_mod = current_proto_message!(__CALLER__.module)
 
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+    build_struct = current_draft_build!(__CALLER__.module)
 
-    {excluded_fields, _} = Module.eval_quoted(__CALLER__, fields)
+    new_excluded_fields = 
+      build_struct.excluded_fields
+      |> Map.get(proto_mod, MapSet.new())
+      |> MapSet.union(MapSet.new(fields))
 
-    identifier = gql_object_name(mod)
+    excluded_fields = Map.put(build_struct.excluded_fields, proto_mod, new_excluded_fields)
 
-    case Map.get(gql_messages, identifier) do
-      nil -> raise "cannot find gql object #{inspect(identifier)}"
-      %AbsintheProto.Objects.GqlObject{} = obj ->
-        new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
-        Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
-      %AbsintheProto.Objects.GqlService{} = obj ->
-        new_msgs = remove_fields(gql_messages, obj, mod, excluded_fields)
-        Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
-      x ->
-        raise "exclude_fields is only applicable to proto messages not #{x}"
-    end
+    build_struct = %{build_struct | excluded_fields: excluded_fields}
+    save_draft_build(build_struct, __CALLER__.module)
+
+    nil
   end
 
-  defmacro update_field(field_name, attrs) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+  @doc """
+  Update a specific field that maps to an rpc call.
 
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
+  Only used within a call to modify a service
 
-    unless proto_type(mod) == :message do
-      raise "cannot update_field on non message"
+  Example
+
+  ```
+    modify MyProtos.Services.Flowers.Service do
+      update_rpc :rpc_method, required_args: [...], skip_args: [...], description: "some docs"
     end
+  ```
 
-    {new_attrs, _} = Module.eval_quoted(__CALLER__, attrs)
-    {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
-
-    case Enum.find(mod.__message_props__.field_props, fn {_, p} -> p.name_atom == field_name end) do
-      nil ->
-        raise "could not find field #{inspect(field_name)} in #{mod}"
-      {_, %{oneof: nil}} ->
-        obj_name = gql_object_name(mod)
-        case Map.get(gql_messages, obj_name) do
-          nil -> raise "could not find gql message #{obj_name}"
-          %{fields: _} = obj ->
-            do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
-        end
-      {_, %{oneof: _oneof_id} = _props} -> :todo
-    end
-  end
-
+  Update rpc is used to require or skip arguments or to add documentation.
+  """
   defmacro update_rpc(field_name, attrs) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
-    obj_name = gql_object_name(mod)
-    obj = Map.get(gql_messages, obj_name)
-
-    case obj do
-      %AbsintheProto.Objects.GqlService{} ->
-        :nothing
-      %mod{} ->
-        raise "cannot update rpc call on #{mod}"
-    end
-
-    {new_attrs, _} = Module.eval_quoted(__CALLER__, attrs)
     {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
-    skip_args = Keyword.get(new_attrs, :skip_args, [])
-    required_args = Keyword.get(new_attrs, :required_args, [])
-    new_skip_args = Map.put(obj.skip_args, field_name, skip_args)
-    new_required_args = Map.put(obj.required_args, field_name, required_args)
-    new_attrs = Keyword.drop(new_attrs, [:skip_args, :required_args])
+    {attrs, _} = Module.eval_quoted(__CALLER__, attrs)
+    proto_mod = current_proto_message!(__CALLER__.module)
 
-    obj = %{obj | skip_args: new_skip_args, required_args: new_required_args}
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, obj)
+    build_struct = current_draft_build!(__CALLER__.module)
 
-    do_update_field(__CALLER__.module, gql_messages, obj, field_name, new_attrs)
+    if !has_proto_type?(build_struct, proto_mod, :service) do 
+      raise "#{proto_mod} is not an service. cannot update_rpc"
+    end
+
+    mod_updated_rpcs = 
+      build_struct.updated_rpcs
+      |> Map.get(proto_mod, %{})
+      |> Map.put(field_name, %{field_name: field_name, attrs: attrs})
+
+    updated_rpcs = Map.put(build_struct.updated_rpcs, proto_mod, mod_updated_rpcs)
+
+    build_struct = %{build_struct | updated_rpcs: updated_rpcs}
+    save_draft_build(build_struct, __CALLER__.module)
+
+    nil
   end
 
-  defmacro service_resolver(rmod) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
-    obj_name = gql_object_name(mod)
-    obj = Map.get(gql_messages, obj_name)
-    {resolver_mod, _} = Module.eval_quoted(__CALLER__, rmod)
+  @doc """
+  Used within a modify call of a SERVICE.
 
-    unless mod do
-      raise "not modifying a service"
+  Normally not needed, you can override the service resolver
+  to a custom one if required.
+  """
+  defmacro service_resolver(resolver) do
+    {resolver, _} = Module.eval_quoted(__CALLER__, resolver)
+
+    build_struct = current_draft_build!(__CALLER__.module)
+    proto_mod = current_proto_message!(__CALLER__.module)
+
+    if !has_proto_type?(build_struct, proto_mod, :service) do 
+      raise "#{proto_mod} is not an service. cannot set service resolver"
     end
 
-    unless proto_type(mod) == :service do
-      raise "cannot set service_resolver on non service"
-    end
-
-    unless obj do
-      raise "cannot find object for #{obj_name}"
-    end
-
-    new_msgs = Map.put(gql_messages, obj.identifier, %{obj | resolver_module: resolver_mod})
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
+    resolvers = Map.put(build_struct.service_resolvers, proto_mod, resolver)
+    build_struct = %{build_struct | service_resolvers: resolvers}
+    save_draft_build(build_struct, __CALLER__.module)
+    nil
   end
 
-  defmacro rpc_queries(raw_queries) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
-    obj_name = gql_object_name(mod)
-    obj = Map.get(gql_messages, obj_name)
-    {queries, _} = Module.eval_quoted(__CALLER__, raw_queries)
+  @doc """
+  Used within a `modify` call of a SERVICE.
 
-    unless proto_type(mod) == :service do
-      raise "cannot update_field on non message"
-    end
+  By default all rpc methods are `mutation`s.
+  Specify the methods/fields that should be considered queries.
 
-    new_msgs = Map.put(gql_messages, obj.identifier, %{obj | queries: queries})
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, new_msgs)
+  All queries will be created in gql as the service suffixed with `__queries`
+  All mutations will be created in gql as the service suffixed with `__mutations`
+
+  Example
+
+  ```
+  # MyProtos.Services.Flowers.Service gives
+  :my_protos__services__flowers__service__queries
+  :my_protos__services__flowers__service__mutations
+  ```
+
+  Each is only generated when there are fields found.
+  """
+  defmacro rpc_queries(queries) do
+    {queries, _} = Module.eval_quoted(__CALLER__, queries)
+    proto_mod = current_proto_message!(__CALLER__.module)
+
+    build_struct = current_draft_build!(__CALLER__.module)
+
+    if !has_proto_type?(build_struct, proto_mod, :service), do: raise "#{proto_mod} is not a service"
+
+    new_queries = 
+      build_struct.rpc_queries
+      |> Map.get(proto_mod, MapSet.new())
+      |> MapSet.union(MapSet.new(queries))
+
+    queries = Map.put(build_struct.rpc_queries, proto_mod, new_queries)
+
+    build_struct = %{build_struct | rpc_queries: queries}
+    save_draft_build(build_struct, __CALLER__.module)
+    nil
   end
 
+  @doc """
+  Setting queries can be done in bulk by providing a map of service to list of query fields.
+
+  Used within the `build` call
+
+  ```
+  build_rpc_queries(%{
+    MyProtos.Services.Flowers.Service => [:get, :search]
+  })
+  """
+  defmacro bulk_rpc_queries(queries) do
+    {queries, _} = Module.eval_quoted(__CALLER__, queries)
+    build_struct = current_draft_build!(__CALLER__.module)
+
+    new_queries =
+      queries
+      |> Enum.reduce(build_struct.rpc_queries, fn {mod, qs}, acc ->
+        existing = Map.get(acc, mod, MapSet.new())
+        Map.put(acc, mod, MapSet.union(existing, MapSet.new(qs)))
+      end)
+    
+    build_struct = %{build_struct | rpc_queries: new_queries}
+    save_draft_build(build_struct, __CALLER__.module)
+    nil
+  end
+
+  @doc """
+  Used within `modify` call
+
+  Add a field to a proto message when it becomes gql.
+
+  Added fields provide the ability to manually setup associations and other fields that are not part of the proto message.
+
+  Added fields are NOT applied to `input_object`s
+  """
   defmacro add_field(field_name, datatype, attrs \\ []) do
-    ns = Module.get_attribute(__CALLER__.module, :proto_namespace)
-    mod = Module.get_attribute(__CALLER__.module, :modify_proto_mod)
-    maybe_raise_not_modifying_object(mod, ns, __CALLER__)
+    {field_name, _} = Module.eval_quoted(__CALLER__, field_name)
+    proto_mod = current_proto_message!(__CALLER__.module)
 
-    gql_messages = Module.get_attribute(__CALLER__.module, :proto_gql_messages)
-    obj_name = gql_object_name(mod)
-    obj = Map.get(gql_messages, obj_name)
-    if !obj do
-      raise "could not find gql object #{obj_name}"
-    end
+    build_struct = current_draft_build!(__CALLER__.module)
 
-    {ident, _} = Module.eval_quoted(__CALLER__, field_name)
+    if has_proto_type?(build_struct, proto_mod, :enum), do: raise "#{proto_mod} is not an enum. cannot add fields"
+
     {attrs, _} = Module.eval_quoted(__CALLER__, attrs)
     attrs = for {k, v} <- attrs, into: [], do: {k, quote do: unquote(v)}
     attrs = Keyword.put(attrs, :type, datatype)
 
-    new_field = %AbsintheProto.Objects.GqlObject.GqlField{
-      identifier: ident,
-      attrs: attrs,
-    }
-    new_obj = %{obj | fields: Map.put(obj.fields, new_field.identifier, new_field)}
-    gql_messages = Map.put(gql_messages, new_obj.identifier, new_obj)
-    Module.put_attribute(__CALLER__.module, :proto_gql_messages, gql_messages)
+    mod_added_fields = 
+      build_struct.added_fields
+      |> Map.get(proto_mod, %{})
+      |> Map.put(field_name, %{field_name: field_name, attrs: attrs})
+    
+    added_fields = Map.put(build_struct.added_fields, proto_mod, mod_added_fields)
+
+    build_struct = %{build_struct | added_fields: added_fields}
+    save_draft_build(build_struct, __CALLER__.module)
+
+    nil
   end
 
-  defmacro input_objects(objs) do
-    {objs, _} = Module.eval_quoted(__CALLER__, objs)
-    for obj <- objs do
-      create_input_object(__CALLER__.module, obj)
+  defmacro compile_protos_to_gql!(args \\ []) do
+    caller = __CALLER__.module
+    try do
+      build_struct = current_draft_build!(caller)
+
+      {_build_struct, output, _} = 
+        {build_struct, [], caller}
+        |> apply_id_alias!()
+        |> apply_foreign_keys!()
+        |> compile_service_protos!()
+        |> compile_input_protos!()
+        |> compile_messages!()
+        |> compile_enums!()
+        |> compile_clients_and_resolvers!()
+
+      output
+    rescue
+      _ -> []
     end
   end
 
-  defp apply_id_alias(mod) do
-    id_alias = Module.get_attribute(mod, :id_alias)
-    gql_messages = Module.get_attribute(mod, :proto_gql_messages)
-    apply_id_alias(gql_messages, id_alias)
+  defp apply_id_alias!({build_struct, out, caller}) do
+    regs = build_struct.options |> Keyword.get(:id_alias) |> List.wrap()
+    build_struct = apply_id_alias(build_struct, regs)
+    {build_struct, out, caller}
   end
 
-  defp apply_id_alias(gql_messages, nil), do: gql_messages
-  defp apply_id_alias(gql_messages, %Regex{} = id_alias) do
-    apply_id_alias gql_messages, fn {field_id, _} ->
-      Regex.match?(id_alias, to_string(field_id))
+  defp apply_id_alias(%__MODULE__{raw_types: %{message: messages}} = build_struct, regs) 
+  when regs not in [nil, []] and messages not in [nil, []]
+  do
+    Enum.reduce messages, build_struct, fn msg, bs ->
+      field_props =
+        Enum.find msg.__message_props__.field_props, fn 
+          {_, %{repeated?: true}} -> false
+          {_, %{type: {:enum, _}}} -> false
+          {_, %{embedded?: true}} -> false
+          {_, %{name_atom: na}} ->
+            Enum.any?(regs, &(Regex.match?(&1, to_string(na))))
+        end
+
+      case field_props do
+        nil -> bs
+        {_, field_props} ->
+          field_name = field_props.name_atom
+          attrs = 
+            %{
+              field_name: :id, 
+              attrs: [
+                {:type, field_datatype(field_props.type, required?: false, repeated?: false)},
+                {:resolve, quote do
+                  fn (parent, _, _) ->
+                    {:ok, Map.get(parent, unquote(field_name))}
+                  end
+                end},
+              ]
+            }
+
+          new_added_fields = Map.update(bs.added_fields, msg, %{id: attrs}, &Map.put(&1, :id, attrs))
+          %{bs | added_fields: new_added_fields}
+      end
     end
   end
 
-  defp apply_id_alias(gql_messages, id_alias) when is_function(id_alias) do
-    Enum.reduce gql_messages, gql_messages, fn
-      {_, %AbsintheProto.Objects.GqlObject{fields: %{id: _}}}, acc -> acc
-      {obj_id, %AbsintheProto.Objects.GqlObject{} = obj}, acc ->
-        case Enum.find(obj.fields, id_alias) do
-          nil -> acc
-          {field_id, field} ->
-            resolver = quote do
-              fn(%{unquote(field_id) => val}, _, _) ->
-                {:ok, val}
+  defp apply_id_alias(bs, _),
+    do: bs
+
+  defp apply_foreign_keys!({build_struct, out, caller}) do
+    foreign_keys = build_struct.options |> Keyword.get(:foreign_keys, [])
+    build_struct = apply_foreign_keys(build_struct, foreign_keys)
+    {build_struct, out, caller}
+  end
+
+  defp apply_foreign_keys(build_struct, fks) when fks in [nil, []], 
+    do: build_struct
+
+  defp apply_foreign_keys(%__MODULE__{raw_types: %{message: msgs}} = build_struct, [fk_config | rest])
+  when msgs not in [nil, []] and is_list(fk_config)
+  do
+    fk = Keyword.get(fk_config, :foreign_key)
+    namespaces = Keyword.get(fk_config, :namespaces, [])
+    if !fk, do: raise "no foreign key module supplied"
+
+    candidates =
+      if length(namespaces) > 0 do
+        Enum.filter msgs, fn m -> 
+          Enum.any?(namespaces, &within_namespace?(m, &1)) 
+        end
+      else
+        msgs
+      end
+
+    candidates
+    |> Enum.reduce(build_struct, &apply_foreign_key(&1, &2, fk))
+    |> apply_foreign_keys(rest)
+  end
+
+  defp apply_foreign_keys(%__MODULE__{raw_types: %{message: msgs}} = build_struct, [{_, fk} | rest])
+  when msgs not in [nil, []]
+  do
+    msgs
+    |> Enum.reduce(build_struct, &apply_foreign_key(&1, &2, fk))
+    |> apply_foreign_keys(rest)
+  end
+
+  defp apply_foreign_keys(build_struct, _), do: build_struct
+
+  defp apply_foreign_key(msg, build_struct, fk) do
+    excluded_fields = Map.get(build_struct.excluded_fields, msg, MapSet.new())
+
+    fk_msg = %{identifier: gql_object_name(msg), proto_message: msg}
+
+    all_props =
+      Enum.filter msg.__message_props__.field_props, fn {_, fp} ->
+        if Enum.member?(excluded_fields, fp.name_atom) do
+          false
+        else
+          fk_field = %{identifier: fp.name_atom, field_props: fp, list?: fp.repeated?}
+          fk.matcher(fk_msg, fk_field)
+        end
+      end
+
+    Enum.reduce all_props, build_struct, fn props, bs ->
+      case props do
+        nil ->
+          bs
+
+        {_, fp} ->
+          fk_field = %{identifier: fp.name_atom, field_props: fp, list?: fp.repeated?}
+
+          resolver =
+            if fp.repeated? do
+              fk.many_resolver(fk_msg, fk_field)
+            else
+              fk.one_resolver(fk_msg, fk_field)
+            end
+
+          dt = fk.output_field_type(fk_msg, fk_field)
+          ident = fk.output_field_name(fk_msg, fk_field)
+          attrs = fk.attributes(fk_msg, fk_field) || []
+
+          attrs = attrs ++ [
+            type: (quote do: unquote(dt)),
+            resolve: (quote do: unquote(resolver)),
+          ]
+
+          msg_key =
+            if fp.oneof == nil do
+              msg
+            else
+              {name, _} = Enum.find(msg.__message_props__.oneof, fn {_name, idx} -> idx == fp.oneof end)
+              [msg, [:oneof, name]]
+            end
+
+          field_defn = %{field_name: ident, attrs: attrs}
+
+          new_added_fields =
+            Map.update(build_struct.added_fields, msg_key, %{ident => field_defn}, fn x ->
+              Map.put(x, ident, %{field_name: ident, attrs: attrs})
+            end)
+
+          %{bs | added_fields: new_added_fields}
+      end
+    end
+  end
+
+  defp compile_service_protos!({build_struct, out, caller}) do
+    services = Map.get(build_struct.raw_types, :service, [])
+    input = %{services: services, build_struct: build_struct, output: out}
+    %{build_struct: build_struct, output: output} = Enum.reduce(services, input, &compile_service/2)
+    {build_struct, output, caller}
+  end
+
+  defp compile_service(service, %{build_struct: build_struct, output: output} = acc) do
+    excluded_fields = Map.get(build_struct.excluded_fields, service, MapSet.new())
+    rpc_queries = Map.get(build_struct.rpc_queries, service, MapSet.new())
+    resolver = Map.get(build_struct.service_resolvers, service,Module.concat(service, :Resolver))
+
+    {build_struct, calls} =
+      service.__rpc_calls__
+      |> Enum.reduce({build_struct, %{queries: [], mutations: []}}, fn
+        {raw_name, {rpc_input, _streamin}, {rpc_out, _streamout}}, {bs, c}->
+          new_input_objects = gather_all_input_objects_from_mod(rpc_input, build_struct.input_objects)
+          bs = %{bs | input_objects: MapSet.union(bs.input_objects, MapSet.new(new_input_objects))}
+          updated_rpcs = Map.get(bs.updated_rpcs, service, %{})
+
+          field_name = rpc_name_to_gql_name(raw_name)
+          query_type = 
+            if Enum.member?(rpc_queries, field_name) do
+              :queries
+            else
+              :mutations
+            end
+
+          updates = Map.get(updated_rpcs, field_name, %{})
+          skipped_args = get_in(updates, [:attrs, :skip_args]) || []
+          required_args = get_in(updates, [:attrs, :required_args]) || []
+
+          msg_props = rpc_input.__message_props__
+
+          args = 
+            for {_, f} <- msg_props.field_props,
+                          !Enum.member?(excluded_fields, f.name_atom),
+                          !Enum.member?(skipped_args, f.name_atom),
+                          f.oneof == nil
+                          do
+
+              datatype = field_datatype(f.type, required: Enum.member?(required_args, f.name_atom), name_parts: [:input_object], repeated?: f.repeated?)
+              arg_name = f.name_atom
+
+              quote do 
+                arg unquote(arg_name), unquote(datatype)
               end
             end
 
-            id_attrs =
-              field.attrs
-              |> Keyword.take([:type])
-              |> Keyword.put(:resolve, resolver)
+          oneof_args = 
+            for f <- Keyword.keys(msg_props.oneof),
+                     !Enum.member?(excluded_fields, f),
+                     !Enum.member?(skipped_args, f)
+                     do
+            
+              datatype = field_datatype(rpc_input, required: Enum.member?(required_args, f), name_parts: [:oneof, f, :input_object])
+              arg_name = f
 
-            id_field = %AbsintheProto.Objects.GqlObject.GqlField{
-              identifier: :id,
-              attrs: id_attrs
-            }
+              quote do 
+                arg unquote(arg_name), unquote(datatype)
+              end
+            end
 
-            obj = %{obj | fields: Map.put(obj.fields, :id, id_field)}
-            Map.put(acc, obj_id, obj)
-        end
-      _, acc -> acc
-    end
-  end
+          all_args = args ++ oneof_args
 
-  defp apply_id_alias(gql_messages, id_alias) do
-    apply_id_alias gql_messages, fn {field_id, _} ->
-      field_id == id_alias
-    end
-  end
+          output_name = gql_object_name(rpc_out)
+          service_output =
+            quote do
+              field unquote(field_name), unquote(output_name) do
+                unquote_splicing(all_args)
+                resolve {unquote(resolver), unquote(field_name)}
+              end
+            end
 
-  defp apply_foreign_keys(gql_messages, []), do: gql_messages
-  defp apply_foreign_keys(gql_messages, foreign_keys) do
-    Enum.map gql_messages, fn
-      {obj_id, %AbsintheProto.Objects.GqlObject{} = obj} ->
-        # go over the fields defined and see if they match
-        new_fields =
-          obj.fields
-          |> Enum.map(fn {id, field} -> maybe_create_foreign_key({id, field}, obj, foreign_keys) end)
-          |> Enum.filter(&(&1 != nil))
-          |> Enum.into(%{})
-
-        {obj_id, %{obj | fields: Map.merge(obj.fields, new_fields)}}
-      item ->
-        item
-    end
-  end
-
-  defp do_update_field(caller_mod, gql_messages, obj, field_name, new_attrs) do
-    new_fields = update_field_attrs(obj.fields, field_name, new_attrs)
-    obj = %{obj | fields: new_fields}
-    Module.put_attribute(caller_mod, :proto_gql_messages, Map.put(gql_messages, obj.identifier, obj))
-  end
-
-  defp update_field_attrs(fields, field_name, new_attrs) do
-    field = Map.get(fields, field_name)
-    if !field do
-      raise "could not find field #{field_name}"
-    end
-
-    attrs = field.attrs
-
-    custom_attrs = Keyword.take(new_attrs, @custom_field_attrs)
-    new_attrs = Keyword.drop(new_attrs, @custom_field_attrs)
-
-    new_attrs =
-      for {k, v} <- new_attrs, into: [], do: {k, quote do: unquote(v)}
-
-    new_attrs = Keyword.merge(attrs, new_attrs)
-
-    new_attrs =
-      if Keyword.get(custom_attrs, :non_null) do
-        type = Keyword.get(new_attrs, :type)
-        content =
-          quote bind_quoted: [type: Macro.escape(type, unquote: true)] do
-            non_null(type)
+          c = update_in c, [query_type], fn existing_quoted ->
+            [service_output | existing_quoted]
           end
-        Keyword.put(new_attrs, :type, content)
+
+          {bs, c}
+      end)
+
+    # construct objects for the mutations and queries
+    out_quoted =
+      if length(calls.queries) > 0 do
+        the_calls = calls.queries
+        obj_name = gql_object_name(service, [:queries])
+
+        [
+          quote do
+            object(unquote(obj_name)) do
+              unquote_splicing(the_calls)
+            end
+          end
+        ]
       else
-        new_attrs
-      end
-
-    Map.put(fields, field_name, %{field | attrs: new_attrs})
-  end
-
-  defp create_input_object(within_mod, mod) do
-    ns = Module.get_attribute(within_mod, :proto_namespace)
-    gql_messages = Module.get_attribute(within_mod, :proto_gql_messages)
-    if !within_namespace?(mod, ns) do
-      raise "cannot create input object for #{mod}. It is not within the #{ns} namespace"
-    end
-
-    obj_name = gql_object_name(mod, [:input_object])
-
-    # we only want to create this once
-    with obj when is_nil(obj) <- Map.get(gql_messages, obj_name) do
-      input_objs =
-        for o <- proto_gql_object(:input, mod, ns), mod != Google.Protobuf.Struct, into: %{}, do: {o.identifier, o}
-
-      gql_messages = Map.merge(gql_messages, input_objs)
-      Module.put_attribute(within_mod, :proto_gql_messages, gql_messages)
-    else
-      _ -> nil
-    end
-  end
-
-  @doc false
-  def messages_from_proto_namespace(ns, from_mods) do
-    ns
-    |> modules_for_namespace(from_mods)
-    |> proto_gql_objects(ns)
-  end
-
-  defp modules_for_namespace(ns, from_mods) do
-    mods =
-      from_mods
-      |> Enum.filter(fn m -> within_namespace?(m, ns) end)
-    {:ok, mods}
-  end
-
-  defp proto_gql_objects({:error, _} = err, _ns), do: err
-  defp proto_gql_objects({:ok, mods}, ns) do
-    mods
-    |> Enum.flat_map(fn x -> proto_gql_object(x, ns) end)
-    |> List.flatten()
-    |> Enum.filter(&(&1 != nil))
-    |> Enum.into(%{}, fn i ->
-      {i.identifier, i}
-    end)
-  end
-
-  defp proto_gql_object(mod, ns) do
-    mod
-    |> proto_type()
-    |> proto_gql_object(mod, ns)
-  end
-
-  defp proto_gql_object(:unknown, _, _ns), do: []
-  defp proto_gql_object(:message, mod, ns) do
-    name_opts = []
-    [
-      proto_default_oneof_objects(mod, name_opts, AbsintheProto.Objects.GqlObject, ns),
-      proto_default_map_objects(mod, name_opts, AbsintheProto.Objects.GqlObject, ns),
-      proto_default_message_object(mod, name_opts, AbsintheProto.Objects.GqlObject, ns)
-    ]
-    |> Enum.flat_map(&(&1))
-  end
-
-  defp proto_gql_object(:input, mod, ns) do
-    name_opts = [:input_object]
-    out =
-      [
-        proto_default_oneof_objects(mod, name_opts, AbsintheProto.Objects.GqlInputObject, ns),
-        proto_default_map_objects(mod, name_opts, AbsintheProto.Objects.GqlInputObject, ns),
-        proto_default_message_object(mod, name_opts, AbsintheProto.Objects.GqlInputObject, ns)
-      ]
-      |> Enum.flat_map(&(&1))
-
-    result =
-    Enum.reduce mod.__message_props__.field_props, out, fn
-      {_, %{type: Google.Protobuf.Struct}}, acc ->
-        acc
-      {_, %{embedded?: true, type: type}}, acc ->
-        if within_namespace?(type, ns) do
-          :input
-          |> proto_gql_object(type, ns)
-          |> Enum.concat(acc)
-        else
-          acc
-        end
-      _, acc -> acc
-    end
-    result
-  end
-
-  defp proto_gql_object(:enum, mod, _ns) do
-    %AbsintheProto.Objects.GqlEnum{
-      module: mod,
-      identifier: gql_object_name(mod),
-      attrs: [],
-      values: Enum.map(mod.__message_props__.field_props, fn {_, p} ->
-        %AbsintheProto.Objects.GqlEnum.GqlValue{identifier: p.name_atom, attrs: []}
-      end),
-    }
-    |> List.wrap()
-  end
-
-  defp proto_gql_object(:service, mod, ns) do
-    calls = mod.__rpc_calls__
-
-    # create input objects
-    other_objs =
-      for {_, {input, _}, {_, _}} <- calls, into: [] do
-        objs = proto_default_oneof_objects(input, [:input_object], AbsintheProto.Objects.GqlInputObject, ns)
-
-        field_objs =
-          for {_, props} <- input.__message_props__.field_props,
-              props.embedded?,
-              within_namespace?(props.type, ns),
-              props.type != Google.Protobuf.Struct,
-              into: [],
-              do: proto_gql_object(:input, props.type, ns)
-        objs ++ field_objs
-      end
-    other_objs = Enum.flat_map(other_objs, &(&1))
-
-    obj = %AbsintheProto.Objects.GqlService{
-      gql_type: :service,
-      identifier: gql_object_name(mod),
-      module: mod,
-      attrs: [],
-      fields: %{},
-    }
-
-    Enum.reduce(mod.__rpc_calls__(), obj, fn {method, {input, _}, {output, _}}, acc ->
-      field_name = method |> to_string() |> Macro.underscore() |> String.to_atom()
-      output_type = gql_object_name(output)
-      args =
-        for {_, props} <- input.__message_props__.field_props,
-            props.oneof == nil,
-            props.type != Google.Protobuf.Struct,
-            into: %{}
-         do
-          datatype =
-            []
-            |> datatype_for_props(props, [:input_object])
-            |> wrap_datatype(props)
-            |> Keyword.get(:type)
-
-          {
-            props.name_atom,
-            [default_value: props.default, name: props.name_atom, type: datatype]
-          }
-        end
-
-      args =
-        Enum.reduce input.__message_props__.oneof || [], args, fn
-          {field_name, _id}, acc ->
-            case input do
-              Google.Protobuf.Struct ->
-                acc
-              input ->
-                output_type = gql_object_name(input, [:oneof, field_name, :input_object])
-                arg = [name: field_name, type: quote do: unquote(output_type)]
-                Map.put(acc, field_name, arg)
-            end
-          _, acc -> acc
-        end
-
-      field =
-        %AbsintheProto.Objects.GqlObject.GqlField{
-          identifier: field_name,
-          attrs: [args: args, type: quote do: unquote(output_type)],
-        }
-      %{obj | fields: Map.put(acc.fields, field.identifier, field)}
-    end)
-    |> List.wrap()
-    |> Enum.concat(other_objs)
-  end
-
-  defp proto_default_oneof_objects(mod, name_opts, as_mod, _ns) do
-    msg_props = mod.__message_props__
-    case msg_props do
-      %{oneof: []} ->
         []
-      %{oneof: oneofs} ->
-        for {field, id} <- oneofs, into: [] do
-          field_props =
-            msg_props.field_props
-            |> Enum.map(fn {_, p} -> p end)
-            |> Enum.filter(&(&1.oneof == id))
-            |> Enum.filter(fn p -> p.type != Google.Protobuf.Struct end)
+      end
 
-          struct(
-            as_mod,
-            %{
-              gql_type: :message,
-              module: nil,
-              identifier: gql_object_name(mod, [:oneof, field] ++ name_opts),
-              attrs: [description: "Only one of these fields may be set"],
-              fields: proto_fields(field_props, %{}, name_opts),
-            }
-          )
-        end
-    end
+    out_quoted =
+      if length(calls.mutations) > 0 do
+        the_calls = calls.mutations
+        obj_name = gql_object_name(service, [:mutations])
+        [
+          quote do
+            object(unquote(obj_name)) do
+              unquote_splicing(the_calls)
+            end
+          end
+          | out_quoted
+        ]
+      else
+        out_quoted
+      end
+
+    %{acc | build_struct: build_struct, output: out_quoted ++ output}
   end
 
-  defp proto_default_map_objects(_mod, _name_opts, _as_mod, _ns), do: []
-  defp proto_default_message_object(mod, name_opts, as_mod, _ns) do
-    struct(
-      as_mod,
-      %{
-        gql_type: :message,
-        module: mod,
-        identifier: gql_object_name(mod, name_opts),
-        attrs: [],
-        fields: %{}
-      }
-    )
-    |> proto_basic_message_fields(name_opts)
-    |> List.wrap()
+  defp compile_input_protos!({build_struct, out, caller}) do
+    all_input_objects = 
+      build_struct.input_objects
+      |> gather_all_input_objects()
+      |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
+      |> Enum.into(MapSet.new())
+
+    quoted_input_objects = Enum.flat_map(all_input_objects, &compile_proto_message(&1, input_object?: true, build_struct: build_struct))
+
+    build_struct = %{build_struct | input_objects: all_input_objects}
+
+    {build_struct, quoted_input_objects ++ out, caller}
   end
 
-  defp proto_basic_message_fields(%{module: nil} = gql_object, _name_opts), do: gql_object
-  defp proto_basic_message_fields(%{module: mod} = gql_object, name_opts) do
-    bare_props =
-      Enum.map(mod.__message_props__.field_props, fn {_, props} -> props end)
-
-    basic_field_props = Enum.filter(bare_props, &(&1.oneof == nil))
-    fields = proto_fields(basic_field_props, %{}, name_opts)
-    fields = create_message_oneof_fields(mod, fields, name_opts)
-
-    %{gql_object | fields: fields}
+  defp compile_messages!({build_struct, out, caller}) do
+    quoted_messages =
+      build_struct.raw_types
+      |> Map.get(:message, [])
+      |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
+      |> Enum.filter(&(!Enum.member?(build_struct.ignored_types, &1)))
+      |> Enum.into(MapSet.new())
+      |> Enum.flat_map(&compile_proto_message(&1, input_object?: false, build_struct: build_struct))
+    
+    {build_struct, quoted_messages ++ out, caller}
   end
 
-  defp create_message_oneof_fields(mod, fields, name_opts) do
-    case mod.__message_props__.oneof do
-      [] -> fields
-      oneofs ->
-        for {ident, _oneof_id} <- oneofs, into: fields do
-          resolver = quote location: :keep do
-            fn
-              %{unquote(ident) => oneof_value}, _, _ ->
-                case oneof_value do
-                  nil -> {:ok, nil}
-                  {field_name, value} -> {:ok, Map.put(%{}, field_name, value)}
-                  map -> {:ok, map}
-                end
-              _, _, _ -> {:ok, nil}
+  defp compile_enums!({build_struct, out, caller}) do
+    enum_ast =
+      build_struct.raw_types
+      |> Map.get(:enum, [])
+      |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
+      |> Enum.filter(&(!Enum.member?(build_struct.ignored_types, &1)))
+      |> Enum.into(MapSet.new())
+      |> Enum.map(fn e ->
+        excluded_fields = Map.get(build_struct.excluded_fields, e, MapSet.new())
+        enum_name = gql_object_name(e)
+
+        value_ast =
+          for {_, f} <- e.__message_props__.field_props,
+                        !Enum.member?(excluded_fields, f.name_atom)
+          do
+            name = f.name_atom
+            quote do
+              value unquote(name)
             end
           end
 
-          {
-            ident,
-            %AbsintheProto.Objects.GqlObject.GqlField{
-              identifier: ident,
-              attrs: [type: gql_object_name(mod, [:oneof, ident] ++ name_opts), resolve: resolver],
-              orig?: true,
-            }
-          }
-      end
-    end
-  end
-
-  defp proto_fields(field_props, existing, name_opts) do
-    for props <- field_props, props.type != Google.Protobuf.Struct, into: existing do
-      f = %AbsintheProto.Objects.GqlObject.GqlField{identifier: props.name_atom, orig?: true, list?: props.repeated?}
-      attrs =
-        []
-        |> datatype_for_props(props, name_opts)
-        |> wrap_datatype(props)
-        |> enum_resolver_for_props(props)
-
-      {f.identifier, %{f | attrs: attrs}}
-    end
-  end
-
-  def datatype_for_props(attrs, props, name_opts)
-  def datatype_for_props(attrs, %{embedded?: true, type: type}, name_opts),
-    do: Keyword.put(attrs, :type, gql_object_name(type, name_opts))
-
-  def datatype_for_props(attrs, %{enum?: true, enum_type: type}, _),
-    do: Keyword.put(attrs, :type, gql_object_name(type))
-
-  def datatype_for_props(attrs, %{type: type}, _),
-    do: Keyword.put(attrs, :type, AbsintheProto.Scalars.proto_to_gql_scalar(type))
-
-  def wrap_datatype(attrs, %{repeated?: true}) do
-    datatype = Keyword.get(attrs, :type)
-    content = quote do: %Absinthe.Type.List{of_type: %Absinthe.Type.NonNull{of_type: unquote(datatype)}}
-    Keyword.put(attrs, :type, content)
-  end
-
-  def wrap_datatype(attrs, _), do: attrs
-
-  defp enum_resolver_for_props(attrs, %{name_atom: name, enum?: true, enum_type: type}) do
-    res =
-      quote do
-        fn
-          %{unquote(name) => value}, _, _ when is_integer(value) ->
-            {:ok, unquote(type).key(value)}
-          %{unquote(name) => value}, _, _ when is_atom(value) ->
-            {:ok, value |> unquote(type).value() |> unquote(type).key()}
-          %{unquote(name) => value}, _, _ when is_binary(value) ->
-            valid_value? =
-              unquote(type).__message_props__.field_props
-              |> Enum.map(fn {_, f} -> to_string(f.name_atom) end)
-              |> Enum.member?(value)
-
-            if valid_value? do
-              {:ok, String.to_atom(value)}
-            else
-              {:error, :invalid_enum_value}
-            end
-          _, _, _ ->
-            {:ok, nil}
-        end
-      end
-    Keyword.put(attrs, :resolve, res)
-  end
-
-  defp enum_resolver_for_props(attrs, _), do: attrs
-
-  defp maybe_create_foreign_key({_id, field}, gql_obj, foreign_keys) do
-    if fk = Enum.find(foreign_keys, fn {_, fk} -> fk.matcher(gql_obj, field) end) do
-      {_fk_name, fk} = fk
-      ident = fk.output_field_name(gql_obj, field)
-      dt = fk.output_field_type(gql_obj, field)
-      resolver =
-        if field.list? do
-          fk.many_resolver(gql_obj, field)
-        else
-          fk.one_resolver(gql_obj, field)
-        end
-      attrs = fk.attributes(gql_obj, field) || []
-
-      attrs = attrs ++ [
-        type: (quote do: unquote(dt)),
-        resolve: (quote do: unquote(resolver)),
-      ]
-
-      {
-        ident,
-        %AbsintheProto.Objects.GqlObject.GqlField{
-          identifier: ident,
-          attrs: attrs,
-        }
-      }
-    else
-      nil
-    end
-  end
-
-  defp remove_fields(msgs, %AbsintheProto.Objects.GqlObject{} = obj, mod, fields) do
-    # remove oneof fields
-    removed_field_props =
-      for {_, props} <- mod.__message_props__.field_props,
-          Enum.member?(fields, props.name_atom),
-          into: [],
-          do: props
-
-    obj = %{obj | fields: Map.drop(obj.fields, fields)}
-    msgs = Map.put(msgs, obj.identifier, obj)
-    oneof_fields_by_name =
-      removed_field_props
-      |> Enum.filter(fn p -> p.oneof != nil end)
-      |> Enum.map(fn p ->
-        oneof_ident = Enum.find(mod.__message_props__.oneof, fn {_name, id} -> id == p.oneof end)
-        case oneof_ident do
-          {name, _} -> %{oneof_name: name, field_name: p.name_atom}
-          _ -> nil
+        quote do
+          enum unquote(enum_name) do
+            unquote_splicing(value_ast)
+          end
         end
       end)
-      |> Enum.filter(&(&1 != nil))
-      |> Enum.group_by(fn i -> Map.get(i, :oneof_name) end)
 
-    Enum.reduce oneof_fields_by_name, msgs, fn {oneof_ident, items}, acc ->
-      obj_name = gql_object_name(mod, [:oneof, oneof_ident])
-      case Map.get(acc, obj_name) do
-        nil -> raise "cannot find the oneof object for #{mod}"
-        %{fields: fields} = oneof_obj ->
-          field_names = Enum.map(items, &(&1.field_name))
-          oneof_obj = %{oneof_obj | fields: Map.drop(fields, field_names)}
-          Map.put(acc, obj_name, oneof_obj)
+    {build_struct, enum_ast ++ out, caller}
+  end
+
+  defp compile_proto_message(type, opts) do
+    build_struct = Keyword.get(opts, :build_struct)
+    input_object? = Keyword.get(opts, :input_object?, false)
+    excluded_fields = Map.get(build_struct.excluded_fields, type, %{})
+    name_parts = if input_object?, do: [:input_object], else: []
+    added_fields = if input_object?, do: %{}, else: Map.get(build_struct.added_fields, type, %{})
+
+    msg_props = type.__message_props__
+
+    fields_ast =
+      for {_, f} <- msg_props.field_props,
+                    !Enum.member?(excluded_fields, f.name_atom),
+                    f.oneof == nil
+                    do
+      
+        datatype = field_datatype(f.type, repeated?: f.repeated?, required?: (!input_object? && !f.embedded?), name_parts: name_parts)
+        field_name = f.name_atom
+        attrs = enum_resolver_for_props([], f)
+
+        quote do
+          field unquote(field_name), unquote(datatype), unquote(attrs)
+        end
       end
+
+    oneof_fields_ast =
+      for f <- Keyword.keys(msg_props.oneof),
+               !Enum.member?(excluded_fields, f)
+               do
+
+        datatype = field_datatype(type, name_parts: [:oneof, f] ++ name_parts)
+        resolver = quote location: :keep do
+          fn
+            %{unquote(f) => oneof_value}, _, _ ->
+              case oneof_value do
+                nil -> {:ok, nil}
+                {field_name, value} -> {:ok, Map.put(%{}, field_name, value)}
+                map -> {:ok, map}
+              end
+            _, _, _ -> {:ok, nil}
+          end
+        end
+
+        attrs = [resolve: resolver]
+
+        quote do
+          field unquote(f), unquote(datatype), unquote(attrs)
+        end
+      end
+
+    oneof_objects =
+      for {name, idx} <- msg_props.oneof,
+                         !Enum.member?(excluded_fields, name) 
+      do
+        oneof_obj_fields =
+          for {_, f} <- msg_props.field_props,
+                        !Enum.member?(excluded_fields, f),
+                        f.oneof == idx
+          do
+            datatype = field_datatype(f.type, repeated?: f.repeated?, required?: (!input_object? && !f.embedded?), name_parts: name_parts)
+            field_name = f.name_atom
+
+            quote do
+              field unquote(field_name), unquote(datatype)
+            end
+          end
+
+        obj_name = gql_object_name(type, [:oneof, name] ++ name_parts)
+
+        if input_object? do
+          quote do
+            input_object(unquote(obj_name)) do
+              unquote_splicing(oneof_obj_fields)
+            end
+          end
+        else
+          added_oneof_fields = Map.get(build_struct.added_fields, [type, [:oneof, name]], %{})
+          added_oneof_fields_ast =
+            for {field_name, %{attrs: attrs}} <- added_oneof_fields do
+              quote do
+                field unquote(field_name), unquote(attrs)
+              end
+            end
+
+          all_oneof_obj_fields = oneof_obj_fields ++ added_oneof_fields_ast
+
+          quote do
+            object(unquote(obj_name)) do
+              unquote_splicing(all_oneof_obj_fields)
+            end
+          end
+        end
+      end
+
+    added_fields_ast = 
+      for {id, %{attrs: attrs}} <- added_fields do
+        quote do
+          field unquote(id), unquote(attrs)
+        end
+      end
+
+    all_fields = fields_ast ++ oneof_fields_ast ++ added_fields_ast
+    all_fields =
+      if length(all_fields) == 0 do
+        [
+          quote do
+            field :noop, :boolean, description: "empty field"
+          end
+        ]
+      else
+        all_fields
+      end
+
+    out_name = gql_object_name(type, name_parts)
+
+    quoted_msg = 
+      if input_object? do
+        quote do
+          input_object(unquote(out_name)) do
+            unquote_splicing(all_fields)
+          end
+        end
+      else
+        quote do
+          object(unquote(out_name)) do
+            unquote_splicing(all_fields)
+          end
+        end
+      end
+
+    [quoted_msg | oneof_objects]
+  end
+
+  defp compile_clients_and_resolvers!({%{raw_types: %{service: services}} = build_struct, _out, _caller} = done) 
+  when services not in [nil, []]
+  do
+    client_builder = AbsintheProto.Client.fetch_client_builder()
+    resolver_builder = AbsintheProto.Resolver.fetch_resolver_builder()
+
+    candidates = 
+      Enum.filter(services, &within_namespace?(&1, build_struct.namespace))
+
+    Enum.each candidates, fn service ->
+      client_name = Module.concat(service, :Client)
+      resolver_name = Module.concat(service, :Resolver)
+      resolver = Map.get(build_struct.service_resolvers, service)
+
+      case client_builder.build_client(service, client_name) do
+        {:error, reason} -> raise "could not build client for #{service} #{inspect(reason)}"
+        _ -> :ok
+      end
+
+      unless resolver do
+        case resolver_builder.build_resolver(service, resolver_name, client_name) do
+          {:error, reason} -> raise "could not build resolver for #{service} #{inspect(reason)}"
+          _ -> :ok
+        end
+      end
+    end
+
+    done
+  end
+
+  defp compile_clients_and_resolvers!(done),
+    do: done
+
+  defp filter_proto_messages(mods, namespace) do
+    mods
+    |> Enum.filter(&within_namespace?(&1, namespace))
+    |> Enum.group_by(&proto_type/1)
+    |> Map.drop([:unknown])
+  end
+
+  defp within_namespace?(_mod, nil), do: true
+  defp within_namespace?(mod, ns) do
+    String.starts_with?(to_string(mod), to_string(ns))
+  end
+
+  defp gather_all_input_objects(input_objects), 
+    do: gather_all_input_objects(Enum.into(input_objects, []), MapSet.new())
+
+  defp gather_all_input_objects([], input_objects), do: input_objects
+  defp gather_all_input_objects([this | rest], input_objects) do
+    if MapSet.member?(input_objects, this) do
+      gather_all_input_objects(rest, input_objects)
+    else
+      gather_all_input_objects(rest, gather_all_input_objects_from_mod(this, input_objects))
     end
   end
 
-  defp remove_fields(msgs, %AbsintheProto.Objects.GqlService{} = srv, mod, fields) do
-    new_fields =
-      for {identifier, f} <- srv.fields,
-          identifier not in fields,
-          into: %{},
-          do: {identifier, f}
+  defp gather_all_input_objects_from_mod(mod, input_objects) do
+    input_objects = MapSet.put(input_objects, mod)
+    new_input_objects =
+      for {_, field} <- mod.__message_props__.field_props,
+                        field.embedded?,
+                        !field.enum?,
+                        !MapSet.member?(input_objects, field.type),
+                        do: field.type
 
-    Map.put(msgs, gql_object_name(mod), %{srv | fields: new_fields})
+    Enum.reduce(new_input_objects, input_objects, &gather_all_input_objects_from_mod/2)
   end
 
   defp proto_type(m) do
@@ -875,101 +993,79 @@ defmodule AbsintheProto.DSL do
         %{__message_props__: 0} ->
           case m.__message_props__ do
             %{enum?: true} -> :enum
-            _ -> :message
+            _ -> 
+              :message
           end
-        _ -> :unknown
+        _ -> 
+          :unknown
       end
     rescue
-      _ -> :unknown
+      _ -> 
+        :unknown
     end
   end
 
-  defp service_attrs(%{attrs: attrs} = field, srv) do
-    attrs =
-      if Keyword.has_key?(attrs, :resolve) do
-        attrs
-      else
-        if srv.resolver_module == nil do
-          raise "no resolver specified for #{srv.identifier}##{field.identifier}"
-        else
-          resolver_mod = srv.resolver_module
-          field_id = field.identifier
+  defp fetch_modules(blank) when blank in [nil, []],
+    do: raise "path or otp_app should be passed to AbsintheProto.DSL.build"
 
-          [resolve: quote do: {unquote(resolver_mod), unquote(field_id)}] ++ attrs
-        end
-      end
-
-    skip_args = Map.get(srv.skip_args, field.identifier, [])
-    required_args = Map.get(srv.required_args, field.identifier, [])
-
-    args =
-      attrs
-      |> Keyword.get(:args, [])
-      |> Enum.reduce([], fn {name, arg}, acc ->
-        type = Keyword.get(arg, :type)
-        if name in skip_args do
-          acc
-        else
-          if name in required_args do
-            new_type =
-              quote location: :keep do
-                Absinthe.Schema.Notation.non_null(unquote(type))
-              end
-            [{name, Keyword.put(arg, :type, new_type)} | acc]
-          else
-            [{name, arg} | acc]
-          end
-        end
-      end)
-      |> Enum.reverse()
-
-    Keyword.put(attrs, :args, args)
+  defp fetch_modules([path_glob: glob]) when is_binary(glob) do
+    paths = Path.wildcard(glob)
+    "grep -h defmodule #{Enum.join(paths, " ")} | awk '{print $2}' | sort"
+    |> String.to_charlist()
+    |> :os.cmd()
+    |> to_string()
+    |> open_string_io!()
+    |> IO.stream(:line)
+    |> Stream.map(&String.trim/1)
+    |> Stream.filter(&(&1 != ""))
+    |> Stream.map(&(:"Elixir.#{&1}"))
+    |> Enum.to_list()
   end
 
-  def gql_object_name(mod, other_parts \\ []) do
-    [Macro.underscore(mod) | other_parts]
-    |> Enum.map(fn i ->
-      i |> to_string() |> Macro.underscore() |> String.replace("/", "__")
-    end)
-    |> Enum.join("__")
-    |> String.to_atom()
+  defp fetch_modules([otp_app: app]) when is_atom(app) do
+    Application.ensure_all_started(app)
+    {:ok, m} = :application.get_key(app, :modules)
+    m
   end
 
-  defp within_namespace?(mod, ns) do
-    String.starts_with?(to_string(mod), to_string(ns))
-  end
-
-  defp maybe_raise_not_modifying_object(nil, ns, env) do
-    raise """
-      not modifying object within #{ns} (#{env.module} - #{env.file}:#{env.line})
-    """
-  end
-  defp maybe_raise_not_modifying_object(_, _, _), do: :nothing
-
-  defp ensure_service_resolver!(%{module: mod, resolver_module: nil}) do
-    raise "no service resolver set for #{mod}"
-  end
-
-  defp ensure_service_resolver!(%{module: mod, fields: fields, resolver_module: resolver}) do
-    defined_funcs = resolver.__info__(:functions)
-
-    non_defined_funcs =
-      fields
-      |> Map.keys()
-      |> Enum.reject(&(Enum.member?(defined_funcs, {&1, 3})))
-
-    case non_defined_funcs do
-      [] -> true
-      _ ->
-        missing_funcs = Enum.join(non_defined_funcs, ", ")
-        raise """
-
-          service resolver for #{mod} - #{resolver}
-          does not define required functions:
-
-          #{missing_funcs}
-
-        """
+  defp open_string_io!(str) do
+    case StringIO.open(str) do
+      {:ok, pid} -> pid
+      {:error, reason} -> raise "Could not open string IO #{inspect(reason)}"
     end
   end
+
+  defp save_draft_build(build, mod) do
+    Module.put_attribute(mod, :ap_current_draft_build, build)
+  end
+
+  defp current_draft_build!(mod) do
+    case Module.get_attribute(mod, :ap_current_draft_build) do
+      nil -> raise "no current build (for #{mod})"
+      build -> build
+    end
+  end
+
+  defp save_current_proto_message(msg_proto, mod) do
+    Module.put_attribute(mod, :ap_current_proto_message, msg_proto)
+  end
+
+  defp current_proto_message!(mod) do
+    case Module.get_attribute(mod, :ap_current_proto_message) do
+      nil -> raise "not currently modifying a message"
+      msg -> msg
+    end
+  end
+
+  defp clear_current_proto_message(mod) do
+    Module.delete_attribute(mod, :ap_current_proto_message)
+  end
+
+  defp has_proto_type?(build_struct, mod, type) do
+    case Map.get(build_struct.raw_types, type) do
+      nil -> false
+      types -> Enum.member?(types, mod)
+    end
+  end
+
 end

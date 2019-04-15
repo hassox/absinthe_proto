@@ -1,7 +1,7 @@
 defmodule AbsintheProto.GoogleTypes do
   use AbsintheProto
 
-  build Google, otp_app: :google_protos do
+  build otp_app: :google_protos, namespace: Google do
     input_objects [
       Google.Protobuf.Any,
       Google.Protobuf.BytesValue,
@@ -16,6 +16,7 @@ defmodule AbsintheProto.GoogleTypes do
       Google.Protobuf.StringValue,
       Google.Protobuf.Timestamp,
       Google.Protobuf.Duration,
+      Google.Protobuf.Struct,
     ]
   end
 
