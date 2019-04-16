@@ -188,8 +188,6 @@ defmodule AbsintheProto.DSL do
 
     Module.eval_quoted(__CALLER__, blk)
 
-    build_struct = current_draft_build!(__CALLER__.module)
-
     nil
   end
 
@@ -440,7 +438,7 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
-  defmacro compile_protos_to_gql!(args \\ []) do
+  defmacro compile_protos_to_gql!(_args \\ []) do
     caller = __CALLER__.module
     try do
       build_struct = current_draft_build!(caller)
@@ -647,10 +645,10 @@ defmodule AbsintheProto.DSL do
                           do
 
               datatype = field_datatype(f.type, required: Enum.member?(required_args, f.name_atom), name_parts: [:input_object], repeated?: f.repeated?)
-              arg_name = f.name_atom
+              {arg_name, attrs} = normalized_field_name_and_args(f.name_atom)
 
               quote do 
-                arg unquote(arg_name), unquote(datatype)
+                arg unquote(arg_name), unquote(datatype), unquote(attrs)
               end
             end
 
@@ -661,19 +659,22 @@ defmodule AbsintheProto.DSL do
                      do
             
               datatype = field_datatype(rpc_input, required: Enum.member?(required_args, f), name_parts: [:oneof, f, :input_object])
-              arg_name = f
+              {arg_name, attrs} = normalized_field_name_and_args(f)
 
               quote do 
-                arg unquote(arg_name), unquote(datatype)
+                arg unquote(arg_name), unquote(datatype), unquote(attrs)
               end
             end
 
           all_args = args ++ oneof_args
 
           output_name = gql_object_name(rpc_out)
+          {rpc_field_name, attrs} = normalized_field_name_and_args(field_name)
+
+
           service_output =
             quote do
-              field unquote(field_name), unquote(output_name) do
+              field unquote(rpc_field_name), unquote(output_name), unquote(attrs) do
                 unquote_splicing(all_args)
                 resolve {unquote(resolver), unquote(field_name)}
               end
@@ -795,8 +796,8 @@ defmodule AbsintheProto.DSL do
                     do
       
         datatype = field_datatype(f.type, repeated?: f.repeated?, required?: (!input_object? && !f.embedded?), name_parts: name_parts)
-        field_name = f.name_atom
-        attrs = enum_resolver_for_props([], f)
+        {field_name, attrs} = normalized_field_name_and_args(f.name_atom)
+        attrs = attrs ++ enum_resolver_for_props([], f)
 
         quote do
           field unquote(field_name), unquote(datatype), unquote(attrs)
@@ -808,23 +809,24 @@ defmodule AbsintheProto.DSL do
                !Enum.member?(excluded_fields, f)
                do
 
-        datatype = field_datatype(type, name_parts: [:oneof, f] ++ name_parts)
+        {f_name, attrs} = normalized_field_name_and_args(f)
+        datatype = field_datatype(type, name_parts: [:oneof, f] ++ name_parts, required?: false)
         resolver = quote location: :keep do
           fn
-            %{unquote(f) => oneof_value}, _, _ ->
+            %{unquote(f_name) => oneof_value}, _, _ ->
               case oneof_value do
                 nil -> {:ok, nil}
-                {field_name, value} -> {:ok, Map.put(%{}, field_name, value)}
+                {f_name, value} -> {:ok, Map.put(%{}, f_name, value)}
                 map -> {:ok, map}
               end
             _, _, _ -> {:ok, nil}
           end
         end
 
-        attrs = [resolve: resolver]
+        attrs = attrs ++ [resolve: resolver]
 
         quote do
-          field unquote(f), unquote(datatype), unquote(attrs)
+          field unquote(f_name), unquote(datatype), unquote(attrs)
         end
       end
 
@@ -837,11 +839,11 @@ defmodule AbsintheProto.DSL do
                         !Enum.member?(excluded_fields, f),
                         f.oneof == idx
           do
-            datatype = field_datatype(f.type, repeated?: f.repeated?, required?: (!input_object? && !f.embedded?), name_parts: name_parts)
-            field_name = f.name_atom
+            datatype = field_datatype(f.type, repeated?: f.repeated?, required?: false, name_parts: name_parts)
+            {field_name, attrs} = normalized_field_name_and_args(f.name_atom)
 
             quote do
-              field unquote(field_name), unquote(datatype)
+              field unquote(field_name), unquote(datatype), unquote(attrs)
             end
           end
 
@@ -1068,4 +1070,13 @@ defmodule AbsintheProto.DSL do
     end
   end
 
+  defp normalized_field_name_and_args(name) do
+    camel_case = name |> to_string() |> Absinthe.Adapter.LanguageConventions.to_external_name(:field)
+    underscore = Absinthe.Adapter.LanguageConventions.to_internal_name(camel_case, :field)
+    if underscore == to_string(name) do
+      {name, []}
+    else
+      {name, [name: to_string(underscore)]}
+    end
+  end
 end
