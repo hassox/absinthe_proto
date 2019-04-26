@@ -1,5 +1,6 @@
 defmodule AbsintheProto.Scalars do
   use Absinthe.Schema.Notation
+
   # other types :group, :message, :enum
   @type_map [
     float: :float,

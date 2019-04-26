@@ -440,23 +440,19 @@ defmodule AbsintheProto.DSL do
 
   defmacro compile_protos_to_gql!(_args \\ []) do
     caller = __CALLER__.module
-    try do
-      build_struct = current_draft_build!(caller)
+    build_struct = current_draft_build!(caller)
 
-      {_build_struct, output, _} = 
-        {build_struct, [], caller}
-        |> apply_id_alias!()
-        |> apply_foreign_keys!()
-        |> compile_service_protos!()
-        |> compile_input_protos!()
-        |> compile_messages!()
-        |> compile_enums!()
-        |> compile_clients_and_resolvers!()
+    {_build_struct, output, _} = 
+      {build_struct, [], caller}
+      |> apply_id_alias!()
+      |> apply_foreign_keys!()
+      |> compile_service_protos!()
+      |> compile_input_protos!()
+      |> compile_messages!()
+      |> compile_enums!()
+      |> compile_clients_and_resolvers!()
 
-      output
-    rescue
-      _ -> []
-    end
+    output
   end
 
   defp apply_id_alias!({build_struct, out, caller}) do

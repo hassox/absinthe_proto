@@ -4,9 +4,9 @@ defmodule AbsintheProtoTest.Types do
   alias AbsintheProto.Objects.ForeignKey
 
   # build all proto messages found within a namespace
-  build paths: Path.wildcard("#{__DIR__}/../../protos/**/*.pb.ex"),
+  build path_glob: "#{__DIR__}/../../protos/**/*.pb.ex",
         id_alias: ~r/^token$/,
-        foreign_keys: [user: AbsintheProtoTest.ForeignKeys.User],
+        foreign_keys: [foreign_key: AbsintheProtoTest.ForeignKeys.User],
         namespace: AbsintheProto.Test
 
   do
