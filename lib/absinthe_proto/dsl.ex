@@ -117,6 +117,23 @@ defmodule AbsintheProto.DSL do
     end
   end
   ```
+
+  To apply overrides in your application you may supply a function in your configuration.
+
+  You must use an anon function here because of load ordering. This function _must_ be available at the time that you compile (build) your gql types using the `build` macro
+
+  ```elixir
+    config :absinthe_proto,
+      modify_message: %{
+        MyProto.Object => fn mod ->
+          quote location: :keep do
+            modify MyProto.Object do
+              add_field :foo, :type_of_foo, resolve: {ResolverModule, :resolver_func}
+            end
+          end
+        end
+      }
+  ```
   """
 
   @typedoc "a glob for compiled proto files. e.g. `my/proto/path/**/*.pb.ex`"
@@ -158,6 +175,7 @@ defmodule AbsintheProto.DSL do
     rpc_queries: %{},
     raw_types: %{},
     updated_rpcs: %{},
+    modify_message: %{},
   ]
 
   import AbsintheProto.Utils
@@ -169,7 +187,9 @@ defmodule AbsintheProto.DSL do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     ns = Keyword.get(opts, :namespace)
 
-    build_struct = %__MODULE__{options: opts, namespace: ns}
+    modify_message = Application.get_env(:absinthe_proto, :modify_message, %{})
+
+    build_struct = %__MODULE__{options: opts, namespace: ns, modify_message: modify_message}
 
     save_draft_build(build_struct, __CALLER__.module)
 
@@ -186,10 +206,42 @@ defmodule AbsintheProto.DSL do
 
     save_draft_build(build_struct, __CALLER__.module)
 
+    result = apply_configured_modifiers(__CALLER__.module)
+
+    if length(result) > 0 do
+      Module.eval_quoted(__CALLER__) do
+        quote do
+          unquote_splicing(result)
+        end
+      end
+    end
+
     Module.eval_quoted(__CALLER__, blk)
 
     nil
   end
+
+  defp apply_configured_modifiers(mod) do
+    build_struct = current_draft_build!(mod)
+
+    mods = 
+      build_struct.modify_message
+      |> Map.keys()
+      |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
+
+    results = 
+      for mod <- mods,
+                !!Map.get(build_struct.modify_message, mod) do
+        case Map.get(build_struct.modify_message, mod) do
+          fun when is_function(fun) ->
+            fun.(mod)
+          _ -> raise "unknown modifier! expected a 1 arity function"
+        end
+      end
+
+    Enum.reject(results, &is_nil/1)
+  end
+
 
   @doc """
   Used within a build call. Provide a list of proto objects to ignore
