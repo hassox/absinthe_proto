@@ -206,7 +206,7 @@ defmodule AbsintheProto.DSL do
 
     save_draft_build(build_struct, __CALLER__.module)
 
-    result = apply_configed_modifies(__CALLER__.module)
+    result = apply_configured_modifiers(__CALLER__.module)
 
     if length(result) > 0 do
       Module.eval_quoted(__CALLER__) do
@@ -221,7 +221,7 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
-  defp apply_configed_modifies(mod) do
+  defp apply_configured_modifiers(mod) do
     build_struct = current_draft_build!(mod)
 
     mods = 
@@ -239,7 +239,7 @@ defmodule AbsintheProto.DSL do
         end
       end
 
-    Enum.reject(results, &(&1 == nil))
+    Enum.reject(results, &is_nil/1)
   end
 
 
