@@ -47,8 +47,8 @@ defmodule AbsintheProto.Utils do
     end
   end
 
-  def quoted_field_datatype(_, dt_name) do 
-    quote do 
+  def quoted_field_datatype(_, dt_name) do
+    quote do
       unquote(dt_name)
     end
   end
@@ -72,10 +72,38 @@ defmodule AbsintheProto.Utils do
             else
               {:error, :invalid_enum_value}
             end
+          %{unquote(name) => values}, _, _ when is_list(values) ->
+            possible_values =
+              unquote(type).__message_props__.field_props
+              |> Enum.map(fn {_, f} -> to_string(f.name_atom) end)
+
+            standardized_values =
+              Enum.map(values, fn(val) ->
+                cond do
+                  is_integer(val) ->
+                    unquote(type).key(val)
+                  is_atom(val) ->
+                    val |> unquote(type).value() |> unquote(type).key()
+                  is_binary(val) ->
+                    String.to_atom(val)
+                  true ->
+                    nil
+                end
+              end)
+
+            valid_values? =
+              Enum.all?(standardized_values, &(Enum.member?(possible_values, to_string(&1))))
+
+            if valid_values? do
+              {:ok, standardized_values }
+            else
+              {:error, :invalid_enum_values}
+            end
           _, _, _ ->
             {:ok, nil}
         end
       end
+
     Keyword.put(attrs, :resolve, res)
   end
 
