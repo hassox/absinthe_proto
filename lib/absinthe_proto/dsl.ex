@@ -964,8 +964,8 @@ defmodule AbsintheProto.DSL do
   defp compile_clients_and_resolvers!({%{raw_types: %{service: services}} = build_struct, _out, _caller} = done) 
   when services not in [nil, []]
   do
-    client_builder = AbsintheProto.Client.fetch_client_builder()
     resolver_builder = AbsintheProto.Resolver.fetch_resolver_builder()
+    client_builder = AbsintheProto.Client.fetch_client_builder()
 
     candidates = 
       Enum.filter(services, &within_namespace?(&1, build_struct.namespace))
