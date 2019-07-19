@@ -47,12 +47,13 @@ defmodule AbsintheProto.Resolver do
   """
   @spec fetch_resolver_builder() :: module
   def fetch_resolver_builder() do
+    require Logger
     case Application.get_env(:absinthe_proto, :resolver_builder, __MODULE__) do
       nil ->
-        require Logger
         Logger.error "No resolver builder config"
         __MODULE__
       cb ->
+        Logger.error "Resolver config found!"
         Code.ensure_compiled(cb)
         cb
     end
