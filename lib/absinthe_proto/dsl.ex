@@ -193,7 +193,10 @@ defmodule AbsintheProto.DSL do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     ns = Keyword.get(opts, :namespace)
 
-    modify_message = Application.get_env(:absinthe_proto, :modify_message, %{})
+    modify_message =
+      :absinthe_proto
+      |> Application.get_env(:modify_message, %{})
+      |> maybe_hydrate_modify_message()
 
     build_struct = %__MODULE__{options: opts, namespace: ns, modify_message: modify_message}
 
@@ -227,6 +230,12 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
+  defp maybe_hydrate_modify_message(mod_msg) when is_binary(mod_msg) do
+    {mod, _} = Code.eval_string(mod_msg)
+    mod
+  end
+  defp maybe_hydrate_modify_message(mod_msg), do: mod_msg
+
   defp apply_configured_modifiers(mod) do
     build_struct = current_draft_build!(mod)
 
@@ -252,7 +261,6 @@ defmodule AbsintheProto.DSL do
 
     Enum.reject(results, &is_nil/1)
   end
-
 
   @doc """
   Used within a build call. Provide a list of proto objects to ignore
