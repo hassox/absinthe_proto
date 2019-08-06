@@ -193,12 +193,7 @@ defmodule AbsintheProto.DSL do
     {opts, _} = Module.eval_quoted(__CALLER__, options)
     ns = Keyword.get(opts, :namespace)
 
-    modify_message =
-      :absinthe_proto
-      |> Application.get_env(:modify_message, %{})
-      |> maybe_hydrate_modify_message()
-
-    build_struct = %__MODULE__{options: opts, namespace: ns, modify_message: modify_message}
+    build_struct = %__MODULE__{options: opts, namespace: ns, modify_message: load_modify_message()}
 
     save_draft_build(build_struct, __CALLER__.module)
 
@@ -230,11 +225,18 @@ defmodule AbsintheProto.DSL do
     nil
   end
 
-  defp maybe_hydrate_modify_message(mod_msg) when is_binary(mod_msg) do
+  @doc false
+  def load_modify_message do
+    :absinthe_proto
+    |> Application.get_env(:modify_message, %{})
+    |> maybe_transform_modify_message!()
+  end
+
+  defp maybe_transform_modify_message!(mod_msg) when is_binary(mod_msg) do
     {mod, _} = Code.eval_string(mod_msg)
     mod
   end
-  defp maybe_hydrate_modify_message(mod_msg), do: mod_msg
+  defp maybe_transform_modify_message!(mod_msg) when is_map(mod_msg), do: mod_msg
 
   defp apply_configured_modifiers(mod) do
     build_struct = current_draft_build!(mod)
