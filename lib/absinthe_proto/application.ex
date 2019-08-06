@@ -12,14 +12,8 @@ defmodule AbsintheProto.Application do
   end
 
   defp validate_modify_message! do
-    case Application.get_env(:absinthe_proto, :modify_message) do
-      str when is_binary(str) ->
-        Code.eval_string(str)
-        true
-      _ ->
-        true
-    end
-  rescue 
+    AbsintheProto.DSL.load_modify_message()
+  rescue
     err ->
       Logger.error("\n\nInvalid configuration (syntax error) for `config :absinthe_proto, :modify_message`\n\n")
       reraise(err, __STACKTRACE__)
