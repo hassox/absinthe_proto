@@ -120,12 +120,13 @@ defmodule AbsintheProto.DSL do
 
   To apply overrides in your application you may supply a function in your configuration.
 
-  You must use an anon function here because of load ordering. This function _must_ be available at the time that you compile (build) your gql types using the `build` macro
+  You must use a string here to avoid issues with compilation order. 
+  This is an advanced feature that is intended to extend library distributions of common proto builds on a per application basis.
 
   ```elixir
-    config :absinthe_proto,
-      modify_message: %{
-        MyProto.Object => fn mod ->
+    modifications = ''' <- use a real heredoc
+      %{
+        MyProto.Object => fn _mod ->
           quote location: :keep do
             modify MyProto.Object do
               add_field :foo, :type_of_foo, resolve: {ResolverModule, :resolver_func}
@@ -133,6 +134,11 @@ defmodule AbsintheProto.DSL do
           end
         end
       }
+    '''
+
+
+    config :absinthe_proto,
+      modify_message: modifications
   ```
   """
 
@@ -233,8 +239,13 @@ defmodule AbsintheProto.DSL do
       for mod <- mods,
                 !!Map.get(build_struct.modify_message, mod) do
         case Map.get(build_struct.modify_message, mod) do
+          {m, f} when is_atom(m) and is_atom(f) ->
+            apply(m, f, [mod])
           fun when is_function(fun) ->
             fun.(mod)
+          str when is_binary(str) ->
+            {map, _} = Code.eval_string(str)
+            map
           _ -> raise "unknown modifier! expected a 1 arity function"
         end
       end
