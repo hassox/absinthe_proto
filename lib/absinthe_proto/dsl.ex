@@ -248,13 +248,8 @@ defmodule AbsintheProto.DSL do
       for mod <- mods,
                 !!Map.get(build_struct.modify_message, mod) do
         case Map.get(build_struct.modify_message, mod) do
-          {m, f} when is_atom(m) and is_atom(f) ->
-            apply(m, f, [mod])
           fun when is_function(fun) ->
             fun.(mod)
-          str when is_binary(str) ->
-            {map, _} = Code.eval_string(str)
-            map
           _ -> raise "unknown modifier! expected a 1 arity function"
         end
       end
