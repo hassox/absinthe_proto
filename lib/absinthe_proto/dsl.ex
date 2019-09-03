@@ -7,7 +7,7 @@ defmodule AbsintheProto.DSL do
   * All input objects for services found
   * All clients (requires a `AbsintheProto.Client` client builder in config)
   * All resolvers for found services (overwriteabe with an `AbsintheProto.Resolver builder)
-  * All rpc calls are setup as mutations by default 
+  * All rpc calls are setup as mutations by default
   * All scalar fields in `object`s are marked as required as per Proto3 behaviour
   * All scalar fields in `input_object`s are not marked as required unless specified
   * Applies specified foreign keys to all objects within the given namespace (optional) `AbsintheProto.ForeignKey`
@@ -17,9 +17,9 @@ defmodule AbsintheProto.DSL do
 
   ### Naming convention
 
-  All objects are created utilizing the generated module name of the 
+  All objects are created utilizing the generated module name of the
   proto message using double `_` between package names and snake case between.
-  
+
   e.g. `MyApp.Protos.FredFlintstone ==> :my_app__protos__fred_flintstone`
 
   * Input objects are suffixed with `__input_object`
@@ -39,9 +39,9 @@ defmodule AbsintheProto.DSL do
 
   Foregin keys if specified will be mapped automatically for every object.
 
-  To setup a foreign key 
-  
-  * Implement the `AbsintheProto.ForeignKey` behaviour. 
+  To setup a foreign key
+
+  * Implement the `AbsintheProto.ForeignKey` behaviour.
   * Specify the foreign key in the `build` macro. Optionally specify namespaces to apply the foreign key
 
   ### Configuration
@@ -51,7 +51,7 @@ defmodule AbsintheProto.DSL do
       config :absinthe_proto,
         resolver_builder: MyResolverBuilder,
         client_builder: MyClientBuilder,
-  
+
 
   ### Troubleshooting
 
@@ -85,13 +85,13 @@ defmodule AbsintheProto.DSL do
         MyProtos.Some.Input
       ])
 
-      # ignore the provided objects and do not generate gql types 
+      # ignore the provided objects and do not generate gql types
       ignore_objects([
         MyProtos.Some.PrivateObject
       ])
 
       bulk_rpc_queries(%{
-        MyProtos.MyService => 
+        MyProtos.MyService =>
 
       })
 
@@ -120,7 +120,7 @@ defmodule AbsintheProto.DSL do
 
   To apply overrides in your application you may supply a function in your configuration.
 
-  You must use a string here to avoid issues with compilation order. 
+  You must use a string here to avoid issues with compilation order.
   This is an advanced feature that is intended to extend library distributions of common proto builds on a per application basis.
 
   ```elixir
@@ -149,7 +149,7 @@ defmodule AbsintheProto.DSL do
   @type otp_app :: :atom
 
   @typedoc """
-  A foreign key specification. 
+  A foreign key specification.
   The foreign key must implement the `AbsintheProto.ForeignKey` behaviour.
   The namespaces specify that all objects found within that namespace will have the foreign key applied
   """
@@ -199,7 +199,7 @@ defmodule AbsintheProto.DSL do
 
     raw_types =
       case fetch_modules(Keyword.take(opts, [:path_glob, :otp_app])) do
-        [] -> 
+        [] ->
           raise "no proto messages found for #{} namespace"
 
         mods ->
@@ -241,12 +241,12 @@ defmodule AbsintheProto.DSL do
   defp apply_configured_modifiers(mod) do
     build_struct = current_draft_build!(mod)
 
-    mods = 
+    mods =
       build_struct.modify_message
       |> Map.keys()
       |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
 
-    results = 
+    results =
       for mod <- mods,
                 !!Map.get(build_struct.modify_message, mod) do
         case Map.get(build_struct.modify_message, mod) do
@@ -271,16 +271,16 @@ defmodule AbsintheProto.DSL do
       objs
       |> MapSet.new()
       |> MapSet.union(build_struct.ignored_types)
-    
+
     build_struct = %{build_struct | ignored_types: ignored_types}
     save_draft_build(build_struct, __CALLER__.module)
 
-    nil 
+    nil
   end
 
   @doc """
   Used within a build call.
-  
+
   Manually specify input_objects to force creating input objects.
 
   Normally all objects that are part of rpc calls are automatically created as input objects
@@ -294,11 +294,11 @@ defmodule AbsintheProto.DSL do
 
     build_struct = current_draft_build!(__CALLER__.module)
 
-    input_objects = 
+    input_objects =
       objs
       |> MapSet.new()
       |> MapSet.union(build_struct.input_objects)
-    
+
     build_struct = %{build_struct | input_objects: input_objects}
     save_draft_build(build_struct, __CALLER__.module)
 
@@ -308,7 +308,7 @@ defmodule AbsintheProto.DSL do
   @doc """
   Modify a specific proto message.
 
-  This could be a 
+  This could be a
 
   * message
   * enum
@@ -333,7 +333,7 @@ defmodule AbsintheProto.DSL do
 
     build_struct = current_draft_build!(__CALLER__.module)
 
-    new_excluded_fields = 
+    new_excluded_fields =
       build_struct.excluded_fields
       |> Map.get(proto_mod, MapSet.new())
       |> MapSet.union(MapSet.new(fields))
@@ -368,11 +368,11 @@ defmodule AbsintheProto.DSL do
 
     build_struct = current_draft_build!(__CALLER__.module)
 
-    if !has_proto_type?(build_struct, proto_mod, :service) do 
+    if !has_proto_type?(build_struct, proto_mod, :service) do
       raise "#{proto_mod} is not an service. cannot update_rpc"
     end
 
-    mod_updated_rpcs = 
+    mod_updated_rpcs =
       build_struct.updated_rpcs
       |> Map.get(proto_mod, %{})
       |> Map.put(field_name, %{field_name: field_name, attrs: attrs})
@@ -397,7 +397,7 @@ defmodule AbsintheProto.DSL do
     build_struct = current_draft_build!(__CALLER__.module)
     proto_mod = current_proto_message!(__CALLER__.module)
 
-    if !has_proto_type?(build_struct, proto_mod, :service) do 
+    if !has_proto_type?(build_struct, proto_mod, :service) do
       raise "#{proto_mod} is not an service. cannot set service resolver"
     end
 
@@ -434,7 +434,7 @@ defmodule AbsintheProto.DSL do
 
     if !has_proto_type?(build_struct, proto_mod, :service), do: raise "#{proto_mod} is not a service"
 
-    new_queries = 
+    new_queries =
       build_struct.rpc_queries
       |> Map.get(proto_mod, MapSet.new())
       |> MapSet.union(MapSet.new(queries))
@@ -466,7 +466,7 @@ defmodule AbsintheProto.DSL do
         existing = Map.get(acc, mod, MapSet.new())
         Map.put(acc, mod, MapSet.union(existing, MapSet.new(qs)))
       end)
-    
+
     build_struct = %{build_struct | rpc_queries: new_queries}
     save_draft_build(build_struct, __CALLER__.module)
     nil
@@ -493,11 +493,11 @@ defmodule AbsintheProto.DSL do
     attrs = for {k, v} <- attrs, into: [], do: {k, quote do: unquote(v)}
     attrs = Keyword.put(attrs, :type, datatype)
 
-    mod_added_fields = 
+    mod_added_fields =
       build_struct.added_fields
       |> Map.get(proto_mod, %{})
       |> Map.put(field_name, %{field_name: field_name, attrs: attrs})
-    
+
     added_fields = Map.put(build_struct.added_fields, proto_mod, mod_added_fields)
 
     build_struct = %{build_struct | added_fields: added_fields}
@@ -510,7 +510,7 @@ defmodule AbsintheProto.DSL do
     caller = __CALLER__.module
     build_struct = current_draft_build!(caller)
 
-    {_build_struct, output, _} = 
+    {_build_struct, output, _} =
       {build_struct, [], caller}
       |> apply_id_alias!()
       |> apply_foreign_keys!()
@@ -529,12 +529,12 @@ defmodule AbsintheProto.DSL do
     {build_struct, out, caller}
   end
 
-  defp apply_id_alias(%__MODULE__{raw_types: %{message: messages}} = build_struct, regs) 
+  defp apply_id_alias(%__MODULE__{raw_types: %{message: messages}} = build_struct, regs)
   when regs not in [nil, []] and messages not in [nil, []]
   do
     Enum.reduce messages, build_struct, fn msg, bs ->
       field_props =
-        Enum.find msg.__message_props__.field_props, fn 
+        Enum.find msg.__message_props__.field_props, fn
           {_, %{repeated?: true}} -> false
           {_, %{type: {:enum, _}}} -> false
           {_, %{embedded?: true}} -> false
@@ -546,9 +546,9 @@ defmodule AbsintheProto.DSL do
         nil -> bs
         {_, field_props} ->
           field_name = field_props.name_atom
-          attrs = 
+          attrs =
             %{
-              field_name: :id, 
+              field_name: :id,
               attrs: [
                 {:type, field_datatype(field_props.type, required?: false, repeated?: false)},
                 {:resolve, quote do
@@ -574,7 +574,7 @@ defmodule AbsintheProto.DSL do
     {build_struct, out, caller}
   end
 
-  defp apply_foreign_keys(build_struct, fks) when fks in [nil, []], 
+  defp apply_foreign_keys(build_struct, fks) when fks in [nil, []],
     do: build_struct
 
   defp apply_foreign_keys(%__MODULE__{raw_types: %{message: msgs}} = build_struct, [fk_config | rest])
@@ -586,8 +586,8 @@ defmodule AbsintheProto.DSL do
 
     candidates =
       if length(namespaces) > 0 do
-        Enum.filter msgs, fn m -> 
-          Enum.any?(namespaces, &within_namespace?(m, &1)) 
+        Enum.filter msgs, fn m ->
+          Enum.any?(namespaces, &within_namespace?(m, &1))
         end
       else
         msgs
@@ -658,7 +658,7 @@ defmodule AbsintheProto.DSL do
           field_defn = %{field_name: ident, attrs: attrs}
 
           new_added_fields =
-            Map.update(build_struct.added_fields, msg_key, %{ident => field_defn}, fn x ->
+            Map.update(bs.added_fields, msg_key, %{ident => field_defn}, fn x ->
               Map.put(x, ident, %{field_name: ident, attrs: attrs})
             end)
 
@@ -688,7 +688,7 @@ defmodule AbsintheProto.DSL do
           updated_rpcs = Map.get(bs.updated_rpcs, service, %{})
 
           field_name = rpc_name_to_gql_name(raw_name)
-          query_type = 
+          query_type =
             if Enum.member?(rpc_queries, field_name) do
               :queries
             else
@@ -701,7 +701,7 @@ defmodule AbsintheProto.DSL do
 
           msg_props = rpc_input.__message_props__
 
-          args = 
+          args =
             for {_, f} <- msg_props.field_props,
                           !Enum.member?(excluded_fields, f.name_atom),
                           !Enum.member?(skipped_args, f.name_atom),
@@ -711,21 +711,21 @@ defmodule AbsintheProto.DSL do
               datatype = field_datatype(f.type, required: Enum.member?(required_args, f.name_atom), name_parts: [:input_object], repeated?: f.repeated?)
               {arg_name, attrs} = normalized_field_name_and_args(f.name_atom)
 
-              quote do 
+              quote do
                 arg unquote(arg_name), unquote(datatype), unquote(attrs)
               end
             end
 
-          oneof_args = 
+          oneof_args =
             for f <- Keyword.keys(msg_props.oneof),
                      !Enum.member?(excluded_fields, f),
                      !Enum.member?(skipped_args, f)
                      do
-            
+
               datatype = field_datatype(rpc_input, required: Enum.member?(required_args, f), name_parts: [:oneof, f, :input_object])
               {arg_name, attrs} = normalized_field_name_and_args(f)
 
-              quote do 
+              quote do
                 arg unquote(arg_name), unquote(datatype), unquote(attrs)
               end
             end
@@ -788,7 +788,7 @@ defmodule AbsintheProto.DSL do
   end
 
   defp compile_input_protos!({build_struct, out, caller}) do
-    all_input_objects = 
+    all_input_objects =
       build_struct.input_objects
       |> gather_all_input_objects()
       |> Enum.filter(&within_namespace?(&1, build_struct.namespace))
@@ -809,7 +809,7 @@ defmodule AbsintheProto.DSL do
       |> Enum.filter(&(!Enum.member?(build_struct.ignored_types, &1)))
       |> Enum.into(MapSet.new())
       |> Enum.flat_map(&compile_proto_message(&1, input_object?: false, build_struct: build_struct))
-    
+
     {build_struct, quoted_messages ++ out, caller}
   end
 
@@ -849,7 +849,15 @@ defmodule AbsintheProto.DSL do
     input_object? = Keyword.get(opts, :input_object?, false)
     excluded_fields = Map.get(build_struct.excluded_fields, type, %{})
     name_parts = if input_object?, do: [:input_object], else: []
-    added_fields = if input_object?, do: %{}, else: Map.get(build_struct.added_fields, type, %{})
+
+    input_object_type = Module.concat([type, :InputObject])
+
+    added_fields =
+      if input_object? do
+        Map.get(build_struct.added_fields, input_object_type, %{})
+      else
+        Map.get(build_struct.added_fields, type, %{})
+      end
 
     msg_props = type.__message_props__
 
@@ -858,7 +866,7 @@ defmodule AbsintheProto.DSL do
                     !Enum.member?(excluded_fields, f.name_atom),
                     f.oneof == nil
                     do
-      
+
         datatype = field_datatype(f.type, repeated?: f.repeated?, required?: (!input_object? && !f.embedded?), name_parts: name_parts)
         {field_name, attrs} = normalized_field_name_and_args(f.name_atom)
         attrs = attrs ++ enum_resolver_for_props([], f)
@@ -896,7 +904,7 @@ defmodule AbsintheProto.DSL do
 
     oneof_objects =
       for {name, idx} <- msg_props.oneof,
-                         !Enum.member?(excluded_fields, name) 
+                         !Enum.member?(excluded_fields, name)
       do
         oneof_obj_fields =
           for {_, f} <- msg_props.field_props,
@@ -938,7 +946,7 @@ defmodule AbsintheProto.DSL do
         end
       end
 
-    added_fields_ast = 
+    added_fields_ast =
       for {id, %{attrs: attrs}} <- added_fields do
         quote do
           field unquote(id), unquote(attrs)
@@ -959,7 +967,7 @@ defmodule AbsintheProto.DSL do
 
     out_name = gql_object_name(type, name_parts)
 
-    quoted_msg = 
+    quoted_msg =
       if input_object? do
         quote do
           input_object(unquote(out_name)) do
@@ -977,13 +985,13 @@ defmodule AbsintheProto.DSL do
     [quoted_msg | oneof_objects]
   end
 
-  defp compile_clients_and_resolvers!({%{raw_types: %{service: services}} = build_struct, _out, _caller} = done) 
+  defp compile_clients_and_resolvers!({%{raw_types: %{service: services}} = build_struct, _out, _caller} = done)
   when services not in [nil, []]
   do
     client_builder = AbsintheProto.Client.fetch_client_builder()
     resolver_builder = AbsintheProto.Resolver.fetch_resolver_builder()
 
-    candidates = 
+    candidates =
       Enum.filter(services, &within_namespace?(&1, build_struct.namespace))
 
     Enum.each candidates, fn service ->
@@ -1022,7 +1030,7 @@ defmodule AbsintheProto.DSL do
     String.starts_with?(to_string(mod), to_string(ns))
   end
 
-  defp gather_all_input_objects(input_objects), 
+  defp gather_all_input_objects(input_objects),
     do: gather_all_input_objects(Enum.into(input_objects, []), MapSet.new())
 
   defp gather_all_input_objects([], input_objects), do: input_objects
@@ -1059,14 +1067,14 @@ defmodule AbsintheProto.DSL do
         %{__message_props__: 0} ->
           case m.__message_props__ do
             %{enum?: true} -> :enum
-            _ -> 
+            _ ->
               :message
           end
-        _ -> 
+        _ ->
           :unknown
       end
     rescue
-      _ -> 
+      _ ->
         :unknown
     end
   end
