@@ -849,7 +849,15 @@ defmodule AbsintheProto.DSL do
     input_object? = Keyword.get(opts, :input_object?, false)
     excluded_fields = Map.get(build_struct.excluded_fields, type, %{})
     name_parts = if input_object?, do: [:input_object], else: []
-    added_fields = if input_object?, do: %{}, else: Map.get(build_struct.added_fields, type, %{})
+
+    input_object_type = Module.concat([type, :InputObject])
+
+    added_fields =
+      if input_object? do
+        Map.get(build_struct.added_fields, input_object_type, %{})
+      else
+        Map.get(build_struct.added_fields, type, %{})
+      end
 
     msg_props = type.__message_props__
 
