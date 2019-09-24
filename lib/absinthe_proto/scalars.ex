@@ -24,102 +24,134 @@ defmodule AbsintheProto.Scalars do
     Keyword.get(@type_map, type, :error)
   end
 
-  def scalar?(type), 
+  def scalar?(type),
     do: proto_to_gql_scalar(type) != :error
 
   @desc "Base64 encoded string (URL encoded)"
   scalar :bytes do
-    parse fn
+    parse(fn
       nil -> {:ok, nil}
       str -> Base.url_decode64(str)
-    end
+    end)
 
-    serialize fn
+    serialize(fn
       nil -> nil
       str -> Base.url_encode64(str, padding: true)
-    end
+    end)
   end
 
   @desc "Non negative 32 bit integer"
   scalar :uint32 do
-    parse fn
-      nil -> {:ok, nil}
+    parse(fn
+      nil ->
+        {:ok, nil}
+
       %Absinthe.Blueprint.Input.String{value: val} ->
         case Integer.parse(val) do
           :error -> :error
           {i, _} -> ensure_non_neg(i)
         end
+
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
           {i, _} -> ensure_non_neg(i)
         end
-      n when is_integer(n) -> ensure_non_neg(n)
-      n when is_float(n) -> ensure_non_neg(Kernel.trunc(n))
-      %Absinthe.Blueprint.Input.Integer{value: val} -> ensure_non_neg(val)
+
+      n when is_integer(n) ->
+        ensure_non_neg(n)
+
+      n when is_float(n) ->
+        ensure_non_neg(Kernel.trunc(n))
+
+      %Absinthe.Blueprint.Input.Integer{value: val} ->
+        ensure_non_neg(val)
+
       s ->
         IO.puts("GOT: #{inspect(s)}")
         :error
-    end
+    end)
 
-    serialize fn
+    serialize(fn
       nil -> nil
       n -> n
-    end
+    end)
   end
 
   @desc "64 bit integer. Encoded as a string"
   scalar :int64 do
-    parse fn
-      nil -> {:ok, nil}
+    parse(fn
+      nil ->
+        {:ok, nil}
+
       %Absinthe.Blueprint.Input.String{value: val} ->
         case Integer.parse(val) do
           :error -> :error
           {i, _} -> {:ok, i}
         end
+
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
           {i, _} -> {:ok, i}
         end
-      n when is_integer(n) -> {:ok, n}
-      n when is_float(n) -> {:ok, Kernel.trunc(n)}
-      %Absinthe.Blueprint.Input.Integer{value: val} -> {:ok, val}
-      _ -> :error
-    end
 
-    serialize fn
+      n when is_integer(n) ->
+        {:ok, n}
+
+      n when is_float(n) ->
+        {:ok, Kernel.trunc(n)}
+
+      %Absinthe.Blueprint.Input.Integer{value: val} ->
+        {:ok, val}
+
+      _ ->
+        :error
+    end)
+
+    serialize(fn
       nil -> nil
       n -> to_string(n)
-    end
+    end)
   end
 
   @desc "non negative 64 bit integer. Encoded as a string"
   scalar :uint64 do
-    parse fn
-      nil -> {:ok, nil}
+    parse(fn
+      nil ->
+        {:ok, nil}
+
       %Absinthe.Blueprint.Input.String{value: val} ->
         case Integer.parse(val) do
           :error -> :error
           {i, _} -> ensure_non_neg(i)
         end
+
       n when is_binary(n) ->
         case Integer.parse(n) do
           :error -> :error
           {i, _} -> ensure_non_neg(i)
         end
-      n when is_integer(n) -> ensure_non_neg(n)
-      n when is_float(n) -> ensure_non_neg(Kernel.trunc(n))
-      %Absinthe.Blueprint.Input.Integer{value: val} -> ensure_non_neg(val)
-      _ -> :error
-    end
 
-    serialize fn
+      n when is_integer(n) ->
+        ensure_non_neg(n)
+
+      n when is_float(n) ->
+        ensure_non_neg(Kernel.trunc(n))
+
+      %Absinthe.Blueprint.Input.Integer{value: val} ->
+        ensure_non_neg(val)
+
+      _ ->
+        :error
+    end)
+
+    serialize(fn
       nil -> nil
       n -> to_string(n)
-    end
+    end)
   end
 
   def ensure_non_neg(n) when n >= 0, do: {:ok, n}
-  def ensure_non_neg(_n), do: {:error, "negative value found"}
+  def ensure_non_neg(_n), do: {:error, %{message: "negative value found"}}
 end
